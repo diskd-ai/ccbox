@@ -1052,6 +1052,7 @@ pub fn read_from_offset(path: &Path, offset: u64, max_bytes: usize) -> io::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
     use tempfile::tempdir;
 
     #[test]
@@ -1071,6 +1072,54 @@ mod tests {
         let found = find_session_log_path(sessions_dir, "2026-02-02T23:57:58.860Z", session_id);
 
         assert_eq!(found, Some(expected));
+    }
+
+    #[test]
+    fn builds_codex_exec_resume_command_with_expected_args_and_env() {
+        let project_path = PathBuf::from("/tmp/project");
+        let sessions_dir = PathBuf::from("/tmp/sessions");
+        let session_id = "019c72c9-e13d-71b3-b853-5ff79aa22102";
+
+        let command =
+            build_codex_exec_resume_command(&project_path, session_id, &sessions_dir);
+
+        assert_eq!(command.get_program(), OsStr::new("codex"));
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "exec".to_string(),
+                "resume".to_string(),
+                "--full-auto".to_string(),
+                "--json".to_string(),
+                "-C".to_string(),
+                project_path.to_string_lossy().to_string(),
+                session_id.to_string(),
+                "-".to_string(),
+            ]
+        );
+
+        assert_eq!(command.get_current_dir(), Some(project_path.as_path()));
+
+        let sessions_env = command
+            .get_envs()
+            .find_map(|(key, value)| {
+                if key == OsStr::new("CODEX_SESSIONS_DIR") {
+                    value
+                } else {
+                    None
+                }
+            })
+            .map(|value| value.to_string_lossy().to_string());
+
+        assert_eq!(
+            sessions_env,
+            Some(sessions_dir.to_string_lossy().to_string())
+        );
     }
 
     #[test]
