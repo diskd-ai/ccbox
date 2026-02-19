@@ -6,6 +6,9 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Changes
 
+- TUI: show `F1`/`F2`/`F3` shortcuts in the System menu.
+- TUI: Session Stats window uses colored metrics and comma-formatted numbers.
+
 ## [0.1.5] - 2026-02-19
 
 ### Changes

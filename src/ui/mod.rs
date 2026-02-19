@@ -1864,6 +1864,22 @@ fn format_duration(duration: Duration) -> String {
     format!("{hours}h {minutes:02}m")
 }
 
+fn format_commas_u64(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (count, ch) in digits.chars().rev().enumerate() {
+        if count > 0 && count % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
+}
+
+fn format_commas_usize(value: usize) -> String {
+    format_commas_u64(value as u64)
+}
+
 fn timeline_list_item(
     item: &TimelineItem,
     cols: TimelineRowColumns,
@@ -2669,14 +2685,24 @@ fn render_session_stats_overlay(
 
     let max_line_width = (chunks[0].width as usize).saturating_sub(1);
 
-    let cwd = truncate_middle(
-        &overlay.session.meta.cwd.display().to_string(),
-        max_line_width,
-    );
-    let log_path = truncate_middle(
-        &overlay.session.log_path.display().to_string(),
-        max_line_width,
-    );
+    let label_style = Style::default().fg(Color::Gray);
+    let value_style = Style::default().fg(Color::White);
+    let dim_style = Style::default().fg(Color::DarkGray);
+    let path_style = Style::default().fg(Color::LightBlue);
+    let section_style = Style::default()
+        .fg(Color::LightBlue)
+        .add_modifier(Modifier::BOLD);
+    let token_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let success_style = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let invalid_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let error_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
+    let unknown_style = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::BOLD);
+    let added_style = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let removed_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
 
     let duration = overlay.stats.duration_ms.and_then(|ms| {
         if ms >= 0 {
@@ -2686,97 +2712,258 @@ fn render_session_stats_overlay(
         }
     });
 
-    let tool_calls_line = format!(
-        "Tool calls: total={}  success={}  invalid={}  error={}  unknown={}",
-        overlay.stats.tool_calls_total,
-        overlay.stats.tool_calls_success,
-        overlay.stats.tool_calls_invalid,
-        overlay.stats.tool_calls_error,
-        overlay.stats.tool_calls_unknown
-    );
-
-    let token_total = overlay
-        .stats
-        .total_tokens
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "-".to_string());
-    let token_last = overlay
-        .stats
-        .last_tokens
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "-".to_string());
+    let token_total_span = match overlay.stats.total_tokens {
+        Some(v) => Span::styled(format_commas_u64(v), token_style),
+        None => Span::styled("-", dim_style),
+    };
+    let token_last_span = match overlay.stats.last_tokens {
+        Some(v) => Span::styled(format_commas_u64(v), token_style),
+        None => Span::styled("-", dim_style),
+    };
+    let duration_span = match duration {
+        Some(value) => Span::styled(value, value_style.add_modifier(Modifier::BOLD)),
+        None => Span::styled("-", dim_style),
+    };
+    let invalid_count_style = if overlay.stats.tool_calls_invalid > 0 {
+        invalid_style
+    } else {
+        dim_style
+    };
+    let error_count_style = if overlay.stats.tool_calls_error > 0 {
+        error_style
+    } else {
+        dim_style
+    };
+    let unknown_count_style = if overlay.stats.tool_calls_unknown > 0 {
+        unknown_style
+    } else {
+        dim_style
+    };
+    let lines_added_style = if overlay.stats.lines_added > 0 {
+        added_style
+    } else {
+        dim_style
+    };
+    let lines_removed_style = if overlay.stats.lines_removed > 0 {
+        removed_style
+    } else {
+        dim_style
+    };
 
     let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push(Line::from(truncate_end(
-        &format!("Title: {}", overlay.session.title),
-        max_line_width,
-    )));
-    lines.push(Line::from(format!(
-        "Session ID: {}",
-        overlay.session.meta.id
-    )));
-    lines.push(Line::from(format!("Project: {cwd}")));
-    lines.push(Line::from(format!(
-        "Started: {}",
-        overlay.session.meta.started_at_rfc3339
-    )));
+    let title_prefix = "Title: ";
+    let title_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(title_prefix));
+    let title_value = truncate_end(&overlay.session.title, title_budget);
+    lines.push(Line::from(vec![
+        Span::styled(title_prefix, label_style),
+        Span::styled(title_value, value_style.add_modifier(Modifier::BOLD)),
+    ]));
+
+    let id_prefix = "Session ID: ";
+    let id_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(id_prefix));
+    let id_value = truncate_middle(&overlay.session.meta.id, id_budget);
+    lines.push(Line::from(vec![
+        Span::styled(id_prefix, label_style),
+        Span::styled(id_value, dim_style),
+    ]));
+
+    let project_prefix = "Project: ";
+    let project_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(project_prefix));
+    let project_value = truncate_middle(
+        &overlay.session.meta.cwd.display().to_string(),
+        project_budget,
+    );
+    lines.push(Line::from(vec![
+        Span::styled(project_prefix, label_style),
+        Span::styled(project_value, path_style),
+    ]));
+
+    let started_prefix = "Started: ";
+    let started_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(started_prefix));
+    let started_value = truncate_end(&overlay.session.meta.started_at_rfc3339, started_budget);
+    lines.push(Line::from(vec![
+        Span::styled(started_prefix, label_style),
+        Span::styled(started_value, value_style),
+    ]));
     if let Some(modified) = overlay.session.file_modified {
-        lines.push(Line::from(format!(
-            "Modified: {}",
-            relative_time_ago(Some(modified))
-        )));
+        let modified_prefix = "Modified: ";
+        let modified_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(modified_prefix));
+        let modified_value = truncate_end(&relative_time_ago(Some(modified)), modified_budget);
+        lines.push(Line::from(vec![
+            Span::styled(modified_prefix, label_style),
+            Span::styled(modified_value, value_style),
+        ]));
     }
-    lines.push(Line::from(format!(
-        "Log size: {} ({})",
-        format_size(overlay.session.file_size_bytes, DECIMAL),
-        overlay.session.file_size_bytes
-    )));
-    lines.push(Line::from(format!("Log: {log_path}")));
+
+    let log_size_prefix = "Log size: ";
+    let log_size_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(log_size_prefix));
+    let log_size_human = format_size(overlay.session.file_size_bytes, DECIMAL);
+    let log_size_bytes = format_commas_u64(overlay.session.file_size_bytes);
+    let log_size_value = format!("{log_size_human} ({log_size_bytes})");
+    if UnicodeWidthStr::width(log_size_value.as_str()) <= log_size_budget {
+        lines.push(Line::from(vec![
+            Span::styled(log_size_prefix, label_style),
+            Span::styled(
+                log_size_human,
+                value_style.add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" (", dim_style),
+            Span::styled(log_size_bytes, dim_style),
+            Span::styled(")", dim_style),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled(log_size_prefix, label_style),
+            Span::styled(truncate_end(&log_size_value, log_size_budget), value_style),
+        ]));
+    }
+
+    let log_prefix = "Log: ";
+    let log_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(log_prefix));
+    let log_value = truncate_middle(
+        &overlay.session.log_path.display().to_string(),
+        log_budget,
+    );
+    lines.push(Line::from(vec![
+        Span::styled(log_prefix, label_style),
+        Span::styled(log_value, path_style),
+    ]));
     lines.push(Line::from(""));
 
-    lines.push(Line::from("Time"));
-    lines.push(Line::from(format!(
-        "  Duration: {}",
-        duration.unwrap_or_else(|| "-".to_string())
-    )));
+    lines.push(Line::from(vec![Span::styled("Time", section_style)]));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("Duration: ", label_style),
+        duration_span,
+    ]));
     lines.push(Line::from(""));
 
-    lines.push(Line::from("Tokens"));
-    lines.push(Line::from(format!("  Total: {token_total}")));
-    lines.push(Line::from(format!("  Last:  {token_last}")));
+    lines.push(Line::from(vec![Span::styled("Tokens", section_style)]));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("Total: ", label_style),
+        token_total_span,
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("Last:  ", label_style),
+        token_last_span,
+    ]));
     lines.push(Line::from(""));
 
-    lines.push(Line::from("Tools"));
-    lines.push(Line::from(truncate_end(&tool_calls_line, max_line_width)));
+    lines.push(Line::from(vec![Span::styled("Tools", section_style)]));
+    lines.push(Line::from(vec![
+        Span::styled("Tool calls: ", label_style),
+        Span::styled("total ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.stats.tool_calls_total),
+            value_style.add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("success ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.stats.tool_calls_success),
+            success_style,
+        ),
+        Span::raw("  "),
+        Span::styled("invalid ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.stats.tool_calls_invalid),
+            invalid_count_style,
+        ),
+        Span::raw("  "),
+        Span::styled("error ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.stats.tool_calls_error),
+            error_count_style,
+        ),
+        Span::raw("  "),
+        Span::styled("unknown ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.stats.tool_calls_unknown),
+            unknown_count_style,
+        ),
+    ]));
     if overlay.stats.tools_used.is_empty() {
-        lines.push(Line::from("  (none)"));
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled("(none)", dim_style),
+        ]));
     } else {
         for tool in &overlay.stats.tools_used {
-            lines.push(Line::from(truncate_end(
-                &format!("  - {}: {}", tool.name, tool.calls),
-                max_line_width,
-            )));
+            let calls = format_commas_usize(tool.calls);
+            let prefix = "  - ";
+            let suffix = format!(": {calls}");
+            let budget = max_line_width
+                .saturating_sub(UnicodeWidthStr::width(prefix))
+                .saturating_sub(UnicodeWidthStr::width(suffix.as_str()));
+            let tool_name = truncate_end(&tool.name, budget);
+            lines.push(Line::from(vec![
+                Span::styled(prefix, dim_style),
+                Span::styled(tool_name, path_style),
+                Span::styled(": ", dim_style),
+                Span::styled(calls, value_style.add_modifier(Modifier::BOLD)),
+            ]));
         }
     }
     lines.push(Line::from(""));
 
-    lines.push(Line::from("Changes (apply_patch)"));
-    lines.push(Line::from(format!(
-        "  Calls: {}  Ops: {}  Lines: +{} -{}  Files: {}",
-        overlay.stats.apply_patch_calls,
-        overlay.stats.apply_patch_operations,
-        overlay.stats.lines_added,
-        overlay.stats.lines_removed,
-        overlay.stats.files_changed.len()
-    )));
+    lines.push(Line::from(vec![Span::styled(
+        "Changes (apply_patch)",
+        section_style,
+    )]));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("Calls: ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.stats.apply_patch_calls),
+            value_style.add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("Ops: ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.stats.apply_patch_operations),
+            value_style.add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("Lines: ", label_style),
+        Span::styled(
+            format!("+{}", format_commas_usize(overlay.stats.lines_added)),
+            lines_added_style,
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("-{}", format_commas_usize(overlay.stats.lines_removed)),
+            lines_removed_style,
+        ),
+        Span::raw("  "),
+        Span::styled("Files: ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.stats.files_changed.len()),
+            value_style.add_modifier(Modifier::BOLD),
+        ),
+    ]));
     if overlay.stats.files_changed.is_empty() {
-        lines.push(Line::from("  (none)"));
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled("(none)", dim_style),
+        ]));
     } else {
         for file in &overlay.stats.files_changed {
-            lines.push(Line::from(truncate_middle(
-                &format!("  - {} (ops: {})", file.path, file.operations),
-                max_line_width,
-            )));
+            let ops = format_commas_usize(file.operations);
+            let prefix = "  - ";
+            let suffix = format!(" (ops: {ops})");
+            let budget = max_line_width
+                .saturating_sub(UnicodeWidthStr::width(prefix))
+                .saturating_sub(UnicodeWidthStr::width(suffix.as_str()));
+            let file_path = truncate_middle(&file.path, budget);
+            lines.push(Line::from(vec![
+                Span::styled(prefix, dim_style),
+                Span::styled(file_path, path_style),
+                Span::styled(" (ops: ", dim_style),
+                Span::styled(ops, value_style.add_modifier(Modifier::BOLD)),
+                Span::styled(")", dim_style),
+            ]));
         }
     }
 
