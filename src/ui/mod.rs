@@ -967,7 +967,10 @@ fn highlight_query_spans(text: &str, query: &str, base_style: Style) -> Vec<Span
         return vec![Span::styled(text.to_string(), base_style)];
     }
 
-    let highlighted_style = base_style.bg(Color::LightYellow).fg(Color::Black);
+    let highlighted_style = base_style
+        .bg(Color::Blue)
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
     let text_lower = text.to_ascii_lowercase();
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut cursor = 0usize;
