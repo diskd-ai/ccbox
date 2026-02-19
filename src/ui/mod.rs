@@ -538,7 +538,13 @@ fn render_new_session(
     }
     if let Some(hint) = model.update_hint.as_deref() {
         if !hint.trim().is_empty() {
-            spans.push(Span::raw(format!("  ·  {hint}")));
+            spans.push(Span::raw("  ·  "));
+            spans.push(Span::styled(
+                hint.to_string(),
+                Style::default()
+                    .fg(Color::LightGreen)
+                    .add_modifier(Modifier::BOLD),
+            ));
         }
     }
     spans.push(Span::raw("  ·  "));
@@ -757,20 +763,6 @@ fn sessions_footer_line(
     footer_paragraph(text, notice, update_hint, processes_running)
 }
 
-fn footer_with_notices(mut base: String, notices: [Option<&str>; 2]) -> String {
-    for notice in notices {
-        let Some(message) = notice else {
-            continue;
-        };
-        if message.trim().is_empty() {
-            continue;
-        }
-        base.push_str("  ·  ");
-        base.push_str(message);
-    }
-    base
-}
-
 fn footer_paragraph(
     base: String,
     notice: Option<&str>,
@@ -778,7 +770,26 @@ fn footer_paragraph(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    spans.push(Span::raw(footer_with_notices(base, [notice, update_hint])));
+    spans.push(Span::raw(base));
+
+    if let Some(message) = notice {
+        if !message.trim().is_empty() {
+            spans.push(Span::raw("  ·  "));
+            spans.push(Span::raw(message.to_string()));
+        }
+    }
+
+    if let Some(hint) = update_hint {
+        if !hint.trim().is_empty() {
+            spans.push(Span::raw("  ·  "));
+            spans.push(Span::styled(
+                hint.to_string(),
+                Style::default()
+                    .fg(Color::LightGreen)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
     if processes_running {
         spans.push(Span::raw("  ·  "));
         spans.push(Span::styled(
