@@ -748,7 +748,7 @@ fn render_new_session(
             new_session_view.from_sessions.project_path.display()
         ),
     };
-    let header_hint = "Write a prompt, then press Ctrl+Enter (or Cmd+Enter if supported) to send.";
+    let header_hint = "Write a prompt, then press Ctrl+Enter (or Cmd+Enter if supported) to send. Shift+Tab switches engine. F4 switches I/O mode.";
     let header = Paragraph::new(truncate_end(
         header_hint,
         (chunks[0].width as usize).saturating_sub(4),
@@ -821,7 +821,7 @@ fn render_new_session(
         }
     }
 
-    let footer_text = "Keys: edit text  Ctrl+Enter/Cmd+Enter=send  Esc=cancel  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help";
+    let footer_text = "Keys: edit text  Ctrl+Enter/Cmd+Enter=send  Shift+Tab=engine  F4=I/O mode  Esc=cancel  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help";
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(footer_text.to_string()));
     if let Some(notice) = model.notice.as_deref() {
@@ -849,6 +849,17 @@ fn render_new_session(
     ));
     spans.push(Span::styled(
         " (Shift+Tab)".to_string(),
+        Style::default().fg(Color::Blue),
+    ));
+    spans.push(Span::raw("  ·  "));
+    spans.push(Span::styled(
+        format!("I/O: {}", new_session_view.io_mode.label()),
+        Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::styled(
+        " (F4)".to_string(),
         Style::default().fg(Color::Blue),
     ));
     if processes_running(model) {
@@ -1257,7 +1268,7 @@ fn render_processes(
     }
     frame.render_stateful_widget(list, list_area, &mut state);
 
-    let footer_text = "Keys: arrows=move  Enter=session  s=stdout  e=stderr  l=log  k=kill  Esc/Backspace=back  Ctrl+Q/Ctrl+C=quit  F1/?=help";
+    let footer_text = "Keys: arrows=move  Enter=session  a=attach (TTY)  s=stdout  e=stderr  l=log  k=kill  Esc/Backspace=back  Ctrl+Q/Ctrl+C=quit  F1/?=help";
     frame.render_widget(
         footer_paragraph(
             footer_text.to_string(),
@@ -1621,9 +1632,10 @@ fn process_list_item(
     let right_width = status_col_width + UnicodeWidthStr::width(column_sep) + started_col_width;
 
     let left = format!(
-        "{}  {}  pid {}  {}",
+        "{}  {}  {}  pid {}  {}",
         process.id,
         process.engine.label(),
+        process.io_mode.label(),
         process.pid,
         process.prompt_preview
     );
@@ -3937,7 +3949,9 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - Sessions: Space shows Result (last Out)"),
         Line::from("  - Sessions: Ctrl+N/Cmd+N opens New Session"),
         Line::from("  - Sessions: F3 shows Stats"),
-        Line::from("  - New Session: Ctrl+Enter/Cmd+Enter sends, Shift+Tab switches engine"),
+        Line::from(
+            "  - New Session: Ctrl+Enter/Cmd+Enter sends, Shift+Tab switches engine, F4 switches I/O mode",
+        ),
         Line::from("  - Tasks: type to filter, Enter opens, Ctrl+Enter spawns"),
         Line::from("  - Tasks: n creates, Del deletes, Shift+Tab switches engine"),
         Line::from("  - New Task: Ctrl+S saves, Ctrl+I inserts image, Ctrl+P edits project path"),
@@ -3948,7 +3962,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - Session Detail: F3 shows Stats"),
         Line::from("  - Session Detail: Enter jumps to ToolOut for Tool calls"),
         Line::from("  - Session Detail: c toggles Visible Context"),
-        Line::from("  - Processes: s/e/l=open output, k=kill, Enter=open session"),
+        Line::from("  - Processes: a=attach (TTY), s/e/l=open output, k=kill, Enter=open session"),
         Line::from(""),
         Line::from("Help"),
         Line::from("  - F1 or ?: toggle this help"),

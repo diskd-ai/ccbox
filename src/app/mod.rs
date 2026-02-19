@@ -2,8 +2,8 @@ mod line_editor;
 mod text_editor;
 
 use crate::domain::{
-    AgentEngine, ProjectIndex, ProjectSummary, SessionStats, SessionSummary, Task, TaskId,
-    TaskImage, TimelineItem, TimelineItemKind, TurnContextSummary, index_projects,
+    AgentEngine, ProjectIndex, ProjectSummary, SessionStats, SessionSummary, SpawnIoMode, Task,
+    TaskId, TaskImage, TimelineItem, TimelineItemKind, TurnContextSummary, index_projects,
 };
 use crate::infra::{ScanWarningCount, SessionIndex};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -749,7 +749,7 @@ pub const MAIN_MENU_SESSIONS_ITEMS: [MainMenuEntry; 6] = [
     },
 ];
 
-pub const MAIN_MENU_NEW_SESSION_ITEMS: [MainMenuEntry; 3] = [
+pub const MAIN_MENU_NEW_SESSION_ITEMS: [MainMenuEntry; 4] = [
     MainMenuEntry {
         label: "Send",
         hotkey: "Ctrl+Enter or Cmd+Enter",
@@ -763,6 +763,14 @@ pub const MAIN_MENU_NEW_SESSION_ITEMS: [MainMenuEntry; 3] = [
         hotkey: "Shift+Tab",
         key: MainMenuKey {
             code: KeyCode::BackTab,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Switch I/O mode",
+        hotkey: "F4",
+        key: MainMenuKey {
+            code: KeyCode::F(4),
             modifiers: KeyModifiers::NONE,
         },
     },
@@ -948,7 +956,15 @@ pub const MAIN_MENU_TASK_DETAIL_ITEMS: [MainMenuEntry; 4] = [
     },
 ];
 
-pub const MAIN_MENU_PROCESSES_ITEMS: [MainMenuEntry; 6] = [
+pub const MAIN_MENU_PROCESSES_ITEMS: [MainMenuEntry; 7] = [
+    MainMenuEntry {
+        label: "Attach (TTY)",
+        hotkey: "a",
+        key: MainMenuKey {
+            code: KeyCode::Char('a'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
     MainMenuEntry {
         label: "Open stdout",
         hotkey: "s",
@@ -1185,6 +1201,55 @@ impl ProcessStatus {
 }
 
 #[derive(Clone, Debug)]
+pub enum ProcessIoMode {
+    Pipes {
+        stdout_path: PathBuf,
+        stderr_path: PathBuf,
+        log_path: PathBuf,
+    },
+    Tty {
+        transcript_path: PathBuf,
+        log_path: PathBuf,
+    },
+}
+
+impl ProcessIoMode {
+    pub fn is_tty(&self) -> bool {
+        matches!(self, Self::Tty { .. })
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Pipes { .. } => "pipes",
+            Self::Tty { .. } => "tty",
+        }
+    }
+
+    pub fn stdout_path(&self) -> Option<&PathBuf> {
+        match self {
+            Self::Pipes { stdout_path, .. } => Some(stdout_path),
+            Self::Tty {
+                transcript_path, ..
+            } => Some(transcript_path),
+        }
+    }
+
+    pub fn stderr_path(&self) -> Option<&PathBuf> {
+        match self {
+            Self::Pipes { stderr_path, .. } => Some(stderr_path),
+            Self::Tty { .. } => None,
+        }
+    }
+
+    pub fn log_path(&self) -> &PathBuf {
+        match self {
+            Self::Pipes { log_path, .. } => log_path,
+            Self::Tty { log_path, .. } => log_path,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct ProcessInfo {
     pub id: String,
     pub pid: u32,
@@ -1193,11 +1258,9 @@ pub struct ProcessInfo {
     pub prompt_preview: String,
     pub started_at: SystemTime,
     pub status: ProcessStatus,
+    pub io_mode: ProcessIoMode,
     pub session_id: Option<String>,
     pub session_log_path: Option<PathBuf>,
-    pub stdout_path: PathBuf,
-    pub stderr_path: PathBuf,
-    pub log_path: PathBuf,
 }
 
 #[derive(Clone, Debug)]
@@ -1265,6 +1328,7 @@ pub struct NewSessionView {
     pub from_sessions: SessionsView,
     pub editor: TextEditor,
     pub engine: AgentEngine,
+    pub io_mode: SpawnIoMode,
 }
 
 impl NewSessionView {
@@ -1273,6 +1337,7 @@ impl NewSessionView {
             from_sessions,
             editor: TextEditor::new(),
             engine: AgentEngine::Codex,
+            io_mode: SpawnIoMode::Pipes,
         }
     }
 }
@@ -1493,6 +1558,7 @@ pub enum AppCommand {
         engine: AgentEngine,
         project_path: PathBuf,
         prompt: String,
+        io_mode: SpawnIoMode,
     },
     KillProcess {
         process_id: String,
@@ -1500,6 +1566,9 @@ pub enum AppCommand {
     OpenProcessOutput {
         process_id: String,
         kind: ProcessOutputKind,
+    },
+    AttachProcessTty {
+        process_id: String,
     },
 }
 
@@ -3041,6 +3110,9 @@ fn update_new_session(
             model.view = View::Sessions(view.from_sessions.clone());
             return (model, AppCommand::None);
         }
+        KeyCode::F(4) => {
+            view.io_mode = view.io_mode.toggle();
+        }
         KeyCode::BackTab => {
             view.engine = view.engine.toggle();
         }
@@ -3054,6 +3126,7 @@ fn update_new_session(
 
             let project_path = view.from_sessions.project_path.clone();
             let engine = view.engine;
+            let io_mode = view.io_mode;
             model.view = View::Sessions(view.from_sessions.clone());
             return (
                 model,
@@ -3061,6 +3134,7 @@ fn update_new_session(
                     engine,
                     project_path,
                     prompt,
+                    io_mode,
                 },
             );
         }
@@ -3190,6 +3264,23 @@ fn update_processes(
             {
                 model.view = View::Processes(view);
                 return (model, AppCommand::KillProcess { process_id });
+            }
+        }
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            if let Some(process) = model.processes.get(view.selected) {
+                if !process.io_mode.is_tty() {
+                    model.notice = Some("Process is not a TTY session.".to_string());
+                    model.view = View::Processes(view);
+                    return (model, AppCommand::None);
+                }
+                if !process.status.is_running() {
+                    model.notice = Some("Process is not running.".to_string());
+                    model.view = View::Processes(view);
+                    return (model, AppCommand::None);
+                }
+                let process_id = process.id.clone();
+                model.view = View::Processes(view);
+                return (model, AppCommand::AttachProcessTty { process_id });
             }
         }
         KeyCode::Enter => {

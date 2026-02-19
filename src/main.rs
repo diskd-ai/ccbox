@@ -12,11 +12,11 @@ use crate::domain::{
     parse_session_meta_line,
 };
 use crate::infra::{
-    KillProcessError, ProcessExit, ProcessManager, ProcessSignal, SessionIndex, TaskStore,
-    WatchSignal, delete_session_logs, load_last_assistant_output, load_session_index,
-    load_session_timeline, read_from_offset, read_tail, refresh_session_index,
-    resolve_ccbox_state_dir, resolve_sessions_dir, save_session_index, scan_sessions_dir,
-    watch_sessions_dir,
+    AttachTtyError, KillProcessError, ProcessExit, ProcessManager, ProcessSignal, ResizeTtyError,
+    SessionIndex, TaskStore, WatchSignal, WriteTtyError, delete_session_logs,
+    load_last_assistant_output, load_session_index, load_session_timeline, read_from_offset,
+    read_tail, refresh_session_index, resolve_ccbox_state_dir, resolve_sessions_dir,
+    save_session_index, scan_sessions_dir, watch_sessions_dir,
 };
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyboardEnhancementFlags,
@@ -572,8 +572,32 @@ fn run(
 
                             let prompt = format_task_spawn_prompt(&task, &images);
 
-                            match manager.spawn_agent_process(engine, &task.project_path, &prompt) {
+                            match manager.spawn_agent_process(
+                                engine,
+                                &task.project_path,
+                                &prompt,
+                                crate::domain::SpawnIoMode::Pipes,
+                            ) {
                                 Ok(spawned) => {
+                                    let io_mode = match spawned.io {
+                                        crate::infra::SpawnedAgentIo::Pipes {
+                                            stdout_path,
+                                            stderr_path,
+                                            log_path,
+                                        } => crate::app::ProcessIoMode::Pipes {
+                                            stdout_path,
+                                            stderr_path,
+                                            log_path,
+                                        },
+                                        crate::infra::SpawnedAgentIo::Tty {
+                                            transcript_path,
+                                            log_path,
+                                        } => crate::app::ProcessIoMode::Tty {
+                                            transcript_path,
+                                            log_path,
+                                        },
+                                    };
+
                                     model.processes.push(crate::app::ProcessInfo {
                                         id: spawned.id.clone(),
                                         pid: spawned.pid,
@@ -582,11 +606,9 @@ fn run(
                                         prompt_preview: spawned.prompt_preview.clone(),
                                         started_at: spawned.started_at,
                                         status: crate::app::ProcessStatus::Running,
+                                        io_mode,
                                         session_id: None,
                                         session_log_path: None,
-                                        stdout_path: spawned.stdout_path.clone(),
-                                        stderr_path: spawned.stderr_path.clone(),
-                                        log_path: spawned.log_path.clone(),
                                     });
                                     *model = model.with_notice(Some(format!(
                                         "Spawned {} ({})",
@@ -782,6 +804,7 @@ fn run(
                             engine,
                             project_path,
                             prompt,
+                            io_mode,
                         } => {
                             let Some(manager) = process_manager.as_mut() else {
                                 *model = model
@@ -789,8 +812,32 @@ fn run(
                                 continue;
                             };
 
-                            match manager.spawn_agent_process(engine, &project_path, &prompt) {
+                            match manager.spawn_agent_process(
+                                engine,
+                                &project_path,
+                                &prompt,
+                                io_mode,
+                            ) {
                                 Ok(spawned) => {
+                                    let io_mode = match spawned.io {
+                                        crate::infra::SpawnedAgentIo::Pipes {
+                                            stdout_path,
+                                            stderr_path,
+                                            log_path,
+                                        } => crate::app::ProcessIoMode::Pipes {
+                                            stdout_path,
+                                            stderr_path,
+                                            log_path,
+                                        },
+                                        crate::infra::SpawnedAgentIo::Tty {
+                                            transcript_path,
+                                            log_path,
+                                        } => crate::app::ProcessIoMode::Tty {
+                                            transcript_path,
+                                            log_path,
+                                        },
+                                    };
+
                                     model.processes.push(crate::app::ProcessInfo {
                                         id: spawned.id.clone(),
                                         pid: spawned.pid,
@@ -799,11 +846,9 @@ fn run(
                                         prompt_preview: spawned.prompt_preview.clone(),
                                         started_at: spawned.started_at,
                                         status: crate::app::ProcessStatus::Running,
+                                        io_mode,
                                         session_id: None,
                                         session_log_path: None,
-                                        stdout_path: spawned.stdout_path.clone(),
-                                        stderr_path: spawned.stderr_path.clone(),
-                                        log_path: spawned.log_path.clone(),
                                     });
                                     *model = model.with_notice(Some(format!(
                                         "Spawned {} ({})",
@@ -851,6 +896,20 @@ fn run(
                         }
                         AppCommand::OpenProcessOutput { process_id, kind } => {
                             open_process_output_view(model, &process_id, kind);
+                        }
+                        AppCommand::AttachProcessTty { process_id } => {
+                            let Some(manager) = process_manager.as_mut() else {
+                                *model = model
+                                    .with_notice(Some("Process manager disabled.".to_string()));
+                                continue;
+                            };
+
+                            if let Err(error) =
+                                attach_tty_process(terminal, model, manager, &process_id)
+                            {
+                                *model =
+                                    model.with_notice(Some(format!("Failed to attach: {error}")));
+                            }
                         }
                         AppCommand::OpenSessionDetailByLogPath {
                             project_path,
@@ -993,6 +1052,217 @@ fn apply_process_exit(model: &mut AppModel, exit: ProcessExit) {
     }
 }
 
+#[derive(Debug, Error)]
+enum AttachTtyProcessError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+
+    #[error(transparent)]
+    Attach(#[from] AttachTtyError),
+
+    #[error(transparent)]
+    Write(#[from] WriteTtyError),
+
+    #[error(transparent)]
+    Resize(#[from] ResizeTtyError),
+
+    #[cfg(not(unix))]
+    #[error("TTY attach is not supported on this OS yet")]
+    Unsupported,
+}
+
+struct SuspendTuiGuard<'a> {
+    terminal: &'a mut Terminal<CrosstermBackend<Stdout>>,
+}
+
+impl<'a> SuspendTuiGuard<'a> {
+    fn suspend(terminal: &'a mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<Self> {
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        terminal.show_cursor()?;
+        Ok(Self { terminal })
+    }
+}
+
+impl Drop for SuspendTuiGuard<'_> {
+    fn drop(&mut self) {
+        let _ = execute!(self.terminal.backend_mut(), EnterAlternateScreen);
+        let _ = self.terminal.hide_cursor();
+    }
+}
+
+fn attach_tty_process(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    model: &mut AppModel,
+    manager: &mut ProcessManager,
+    process_id: &str,
+) -> Result<(), AttachTtyProcessError> {
+    let Some(process) = model
+        .processes
+        .iter()
+        .find(|process| process.id == process_id)
+        .cloned()
+    else {
+        return Err(io::Error::other("process not found").into());
+    };
+
+    let rx = manager.attach_tty_output(process_id)?;
+    let _suspended = match SuspendTuiGuard::suspend(terminal) {
+        Ok(guard) => guard,
+        Err(error) => {
+            manager.detach_tty_output(process_id);
+            return Err(error.into());
+        }
+    };
+
+    {
+        let mut out = io::stdout().lock();
+        let _ = writeln!(
+            out,
+            "Attached to {} ({}). Press Ctrl-] to detach.",
+            process.id,
+            process.engine.label()
+        );
+        let _ = out.flush();
+    }
+
+    let outcome = attach_tty_loop(model, manager, process_id, rx);
+    manager.detach_tty_output(process_id);
+    let outcome = outcome?;
+
+    match outcome {
+        AttachTtyOutcome::Detached => {
+            model.notice = Some(format!("Detached from {process_id}."));
+        }
+        AttachTtyOutcome::Exited(code) => {
+            model.notice = Some(format!(
+                "Process {} exited{}.",
+                process_id,
+                code.map(|code| format!(" (code {code})"))
+                    .unwrap_or_default()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+enum AttachTtyOutcome {
+    Detached,
+    Exited(Option<i32>),
+}
+
+#[cfg(unix)]
+fn attach_tty_loop(
+    model: &mut AppModel,
+    manager: &mut ProcessManager,
+    process_id: &str,
+    rx: std::sync::mpsc::Receiver<Vec<u8>>,
+) -> Result<AttachTtyOutcome, AttachTtyProcessError> {
+    use std::os::unix::io::AsRawFd;
+
+    const DETACH_BYTE: u8 = 0x1d; // Ctrl-]
+
+    let stdin_fd = io::stdin().as_raw_fd();
+    let mut stdout = io::stdout().lock();
+
+    let mut last_size: Option<(u16, u16)> = None;
+
+    loop {
+        while let Ok(chunk) = rx.try_recv() {
+            stdout.write_all(&chunk)?;
+            stdout.flush()?;
+        }
+
+        if let Ok((cols, rows)) = terminal_size() {
+            let next_size = (rows, cols);
+            if last_size != Some(next_size) {
+                last_size = Some(next_size);
+                let _ = manager.resize_tty(process_id, rows, cols);
+            }
+        }
+
+        for exit in manager.poll_exits() {
+            apply_process_exit(model, exit);
+        }
+
+        let is_running = model
+            .processes
+            .iter()
+            .find(|process| process.id == process_id)
+            .is_some_and(|process| process.status.is_running());
+        if !is_running {
+            let exit_code = model
+                .processes
+                .iter()
+                .find(|process| process.id == process_id)
+                .and_then(|process| match process.status {
+                    crate::app::ProcessStatus::Exited(code) => code,
+                    _ => None,
+                });
+            return Ok(AttachTtyOutcome::Exited(exit_code));
+        }
+
+        let mut poll_fd = libc::pollfd {
+            fd: stdin_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ready = unsafe { libc::poll(&mut poll_fd as *mut libc::pollfd, 1, 50) };
+        if ready < 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        if ready == 0 {
+            continue;
+        }
+
+        if poll_fd.revents & libc::POLLIN == 0 {
+            continue;
+        }
+
+        let mut buf = [0u8; 4096];
+        let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
+        if n < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error.into());
+        }
+        if n == 0 {
+            return Ok(AttachTtyOutcome::Detached);
+        }
+
+        let bytes = &buf[..(n as usize)];
+        let mut detach = false;
+        let mut to_write: Vec<u8> = Vec::new();
+        for &byte in bytes {
+            if byte == DETACH_BYTE {
+                detach = true;
+                break;
+            }
+            to_write.push(byte);
+        }
+
+        if !to_write.is_empty() {
+            let _ = manager.write_tty(process_id, &to_write);
+        }
+
+        if detach {
+            return Ok(AttachTtyOutcome::Detached);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn attach_tty_loop(
+    _model: &mut AppModel,
+    _manager: &mut ProcessManager,
+    _process_id: &str,
+    _rx: std::sync::mpsc::Receiver<Vec<u8>>,
+) -> Result<AttachTtyOutcome, AttachTtyProcessError> {
+    Err(AttachTtyProcessError::Unsupported)
+}
+
 fn open_process_output_view(model: &mut AppModel, process_id: &str, kind: ProcessOutputKind) {
     let Some(process) = model
         .processes
@@ -1005,9 +1275,23 @@ fn open_process_output_view(model: &mut AppModel, process_id: &str, kind: Proces
     };
 
     let file_path = match kind {
-        ProcessOutputKind::Stdout => process.stdout_path.clone(),
-        ProcessOutputKind::Stderr => process.stderr_path.clone(),
-        ProcessOutputKind::Log => process.log_path.clone(),
+        ProcessOutputKind::Stdout => process
+            .io_mode
+            .stdout_path()
+            .cloned()
+            .unwrap_or_else(|| process.io_mode.log_path().clone()),
+        ProcessOutputKind::Stderr => {
+            let Some(path) = process.io_mode.stderr_path() else {
+                *model = model.with_notice(Some(format!(
+                    "No stderr for {} process {}.",
+                    process.io_mode.label(),
+                    process.id
+                )));
+                return;
+            };
+            path.clone()
+        }
+        ProcessOutputKind::Log => process.io_mode.log_path().clone(),
     };
 
     let return_to = match &model.view {

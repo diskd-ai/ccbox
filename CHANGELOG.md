@@ -6,6 +6,8 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Changes
 
+- TUI: add `TTY` spawn mode for New Session with attach/detach from Processes (`a` to attach, `Ctrl-]` to detach).
+
 ### Fixes
 
 - TUI: timeline no longer duplicates the first user prompt.

@@ -1,4 +1,6 @@
 use crate::domain::AgentEngine;
+use crate::domain::SpawnIoMode;
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -16,6 +18,19 @@ const SESSION_LOG_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
 const SESSION_LOG_WAIT_POLL: Duration = Duration::from_millis(200);
 
 #[derive(Clone, Debug)]
+pub enum SpawnedAgentIo {
+    Pipes {
+        stdout_path: PathBuf,
+        stderr_path: PathBuf,
+        log_path: PathBuf,
+    },
+    Tty {
+        transcript_path: PathBuf,
+        log_path: PathBuf,
+    },
+}
+
+#[derive(Clone, Debug)]
 pub struct SpawnedAgentProcess {
     pub id: String,
     pub pid: u32,
@@ -23,9 +38,7 @@ pub struct SpawnedAgentProcess {
     pub project_path: PathBuf,
     pub started_at: SystemTime,
     pub prompt_preview: String,
-    pub stdout_path: PathBuf,
-    pub stderr_path: PathBuf,
-    pub log_path: PathBuf,
+    pub io: SpawnedAgentIo,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +76,18 @@ pub enum SpawnAgentProcessError {
     #[error("failed to spawn process: {0}")]
     Spawn(io::Error),
 
+    #[error("failed to create PTY: {0}")]
+    OpenPty(String),
+
+    #[error("failed to spawn PTY process: {0}")]
+    SpawnPty(String),
+
+    #[error("failed to open PTY reader: {0}")]
+    OpenPtyReader(String),
+
+    #[error("failed to open PTY writer: {0}")]
+    OpenPtyWriter(String),
+
     #[error("failed to open stdout log: {0}")]
     OpenStdout(io::Error),
 
@@ -82,12 +107,56 @@ pub enum KillProcessError {
     Kill(io::Error),
 }
 
+#[derive(Debug, Error)]
+pub enum AttachTtyError {
+    #[error("process not found")]
+    NotFound,
+
+    #[error("process is not a TTY session")]
+    NotTty,
+
+    #[error("failed to attach: {0}")]
+    Attach(String),
+}
+
+#[derive(Debug, Error)]
+pub enum WriteTtyError {
+    #[error("process not found")]
+    NotFound,
+
+    #[error("process is not a TTY session")]
+    NotTty,
+
+    #[error("failed to write to TTY: {0}")]
+    Write(io::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum ResizeTtyError {
+    #[error("process not found")]
+    NotFound,
+
+    #[error("process is not a TTY session")]
+    NotTty,
+
+    #[error("failed to resize TTY: {0}")]
+    Resize(String),
+}
+
 pub struct ProcessManager {
     sessions_dir: PathBuf,
     logs_dir: PathBuf,
     tx: Sender<ProcessSignal>,
     next_id: u64,
-    children: HashMap<String, Child>,
+    pipes_children: HashMap<String, Child>,
+    tty_children: HashMap<String, TtyProcess>,
+}
+
+struct TtyProcess {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    live_tx: Arc<Mutex<Option<Sender<Vec<u8>>>>>,
 }
 
 impl ProcessManager {
@@ -103,11 +172,25 @@ impl ProcessManager {
             logs_dir,
             tx,
             next_id: 1,
-            children: HashMap::new(),
+            pipes_children: HashMap::new(),
+            tty_children: HashMap::new(),
         })
     }
 
     pub fn spawn_agent_process(
+        &mut self,
+        engine: AgentEngine,
+        project_path: &Path,
+        prompt: &str,
+        io_mode: SpawnIoMode,
+    ) -> Result<SpawnedAgentProcess, SpawnAgentProcessError> {
+        match io_mode {
+            SpawnIoMode::Pipes => self.spawn_agent_process_pipes(engine, project_path, prompt),
+            SpawnIoMode::Tty => self.spawn_agent_process_tty(engine, project_path, prompt),
+        }
+    }
+
+    fn spawn_agent_process_pipes(
         &mut self,
         engine: AgentEngine,
         project_path: &Path,
@@ -219,7 +302,7 @@ impl ProcessManager {
             pipe_reader_thread_simple(StreamKind::Stderr, stderr, stderr_file, stderr_combined);
         });
 
-        self.children.insert(id.clone(), child);
+        self.pipes_children.insert(id.clone(), child);
 
         Ok(SpawnedAgentProcess {
             id,
@@ -228,17 +311,191 @@ impl ProcessManager {
             project_path: project_path.to_path_buf(),
             started_at,
             prompt_preview,
-            stdout_path,
-            stderr_path,
-            log_path,
+            io: SpawnedAgentIo::Pipes {
+                stdout_path,
+                stderr_path,
+                log_path,
+            },
         })
+    }
+
+    fn spawn_agent_process_tty(
+        &mut self,
+        engine: AgentEngine,
+        project_path: &Path,
+        prompt: &str,
+    ) -> Result<SpawnedAgentProcess, SpawnAgentProcessError> {
+        let started_at = SystemTime::now();
+        let id = format!("p{}", self.next_id);
+        self.next_id = self.next_id.saturating_add(1);
+
+        let process_dir = self.logs_dir.join(&id);
+        fs::create_dir_all(&process_dir).map_err(SpawnAgentProcessError::CreateProcessDir)?;
+
+        let prompt_path = process_dir.join("prompt.txt");
+        fs::write(&prompt_path, prompt).map_err(SpawnAgentProcessError::WritePrompt)?;
+
+        let log_path = process_dir.join("process.log");
+
+        let prompt_preview = first_non_empty_line(prompt)
+            .unwrap_or_else(|| "(empty prompt)".to_string())
+            .chars()
+            .take(120)
+            .collect::<String>();
+
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| SpawnAgentProcessError::OpenPty(error.to_string()))?;
+
+        let command = build_engine_command_tty(engine, project_path, prompt, &self.sessions_dir);
+        let child = pair
+            .slave
+            .spawn_command(command)
+            .map_err(|error| SpawnAgentProcessError::SpawnPty(error.to_string()))?;
+
+        let pid = child.process_id().unwrap_or(0);
+
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|error| SpawnAgentProcessError::OpenPtyReader(error.to_string()))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|error| SpawnAgentProcessError::OpenPtyWriter(error.to_string()))?;
+
+        let live_tx = Arc::new(Mutex::new(None));
+        let log_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&log_path)
+            .map_err(SpawnAgentProcessError::OpenLog)?;
+
+        let sessions_dir = self.sessions_dir.clone();
+        let tx = self.tx.clone();
+        let process_id = id.clone();
+        let live_tx_thread = live_tx.clone();
+        let project_path = project_path.to_path_buf();
+        let project_path_for_thread = project_path.clone();
+        std::thread::spawn(move || {
+            pty_reader_thread(
+                reader,
+                log_file,
+                PtyReaderContext {
+                    engine,
+                    sessions_dir,
+                    process_id,
+                    tx,
+                    live_tx: live_tx_thread,
+                    project_path: project_path_for_thread,
+                    started_at,
+                },
+            );
+        });
+
+        self.tty_children.insert(
+            id.clone(),
+            TtyProcess {
+                child,
+                master: pair.master,
+                writer,
+                live_tx,
+            },
+        );
+
+        Ok(SpawnedAgentProcess {
+            id,
+            pid,
+            engine,
+            project_path,
+            started_at,
+            prompt_preview,
+            io: SpawnedAgentIo::Tty {
+                transcript_path: log_path.clone(),
+                log_path,
+            },
+        })
+    }
+
+    pub fn attach_tty_output(
+        &mut self,
+        process_id: &str,
+    ) -> Result<std::sync::mpsc::Receiver<Vec<u8>>, AttachTtyError> {
+        if self.pipes_children.contains_key(process_id) {
+            return Err(AttachTtyError::NotTty);
+        }
+        let Some(process) = self.tty_children.get_mut(process_id) else {
+            return Err(AttachTtyError::NotFound);
+        };
+
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        match process.live_tx.lock() {
+            Ok(mut guard) => {
+                *guard = Some(tx);
+            }
+            Err(_) => return Err(AttachTtyError::Attach("lock poisoned".to_string())),
+        }
+        Ok(rx)
+    }
+
+    pub fn detach_tty_output(&mut self, process_id: &str) {
+        let Some(process) = self.tty_children.get_mut(process_id) else {
+            return;
+        };
+        if let Ok(mut guard) = process.live_tx.lock() {
+            *guard = None;
+        }
+    }
+
+    pub fn write_tty(&mut self, process_id: &str, bytes: &[u8]) -> Result<(), WriteTtyError> {
+        if self.pipes_children.contains_key(process_id) {
+            return Err(WriteTtyError::NotTty);
+        }
+        let Some(process) = self.tty_children.get_mut(process_id) else {
+            return Err(WriteTtyError::NotFound);
+        };
+        process
+            .writer
+            .write_all(bytes)
+            .and_then(|()| process.writer.flush())
+            .map_err(WriteTtyError::Write)
+    }
+
+    pub fn resize_tty(
+        &mut self,
+        process_id: &str,
+        rows: u16,
+        cols: u16,
+    ) -> Result<(), ResizeTtyError> {
+        if self.pipes_children.contains_key(process_id) {
+            return Err(ResizeTtyError::NotTty);
+        }
+        let Some(process) = self.tty_children.get_mut(process_id) else {
+            return Err(ResizeTtyError::NotFound);
+        };
+        process
+            .master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| ResizeTtyError::Resize(error.to_string()))
     }
 
     pub fn poll_exits(&mut self) -> Vec<ProcessExit> {
         let mut exits = Vec::new();
         let mut finished = Vec::new();
 
-        for (id, child) in &mut self.children {
+        for (id, child) in &mut self.pipes_children {
             if let Ok(Some(status)) = child.try_wait() {
                 finished.push(id.clone());
                 exits.push(ProcessExit {
@@ -249,17 +506,39 @@ impl ProcessManager {
         }
 
         for id in finished {
-            self.children.remove(&id);
+            self.pipes_children.remove(&id);
+        }
+
+        let mut finished_tty = Vec::new();
+        for (id, process) in &mut self.tty_children {
+            if let Ok(Some(status)) = process.child.try_wait() {
+                finished_tty.push(id.clone());
+                let exit_code = i32::try_from(status.exit_code()).ok();
+                exits.push(ProcessExit {
+                    process_id: id.clone(),
+                    exit_code,
+                });
+            }
+        }
+
+        for id in finished_tty {
+            self.tty_children.remove(&id);
         }
 
         exits
     }
 
     pub fn kill(&mut self, process_id: &str) -> Result<(), KillProcessError> {
-        let Some(child) = self.children.get_mut(process_id) else {
+        if let Some(child) = self.pipes_children.get_mut(process_id) {
+            child.kill().map_err(KillProcessError::Kill)?;
+            return Ok(());
+        }
+
+        let Some(process) = self.tty_children.get_mut(process_id) else {
             return Err(KillProcessError::NotFound);
         };
-        child.kill().map_err(KillProcessError::Kill)?;
+
+        process.child.kill().map_err(KillProcessError::Kill)?;
         Ok(())
     }
 }
@@ -277,6 +556,16 @@ struct PipeReaderContext {
     sessions_dir: PathBuf,
     process_id: String,
     tx: Sender<ProcessSignal>,
+}
+
+struct PtyReaderContext {
+    engine: AgentEngine,
+    sessions_dir: PathBuf,
+    process_id: String,
+    tx: Sender<ProcessSignal>,
+    live_tx: Arc<Mutex<Option<Sender<Vec<u8>>>>>,
+    project_path: PathBuf,
+    started_at: SystemTime,
 }
 
 fn build_engine_command(
@@ -322,6 +611,38 @@ fn build_engine_command(
     }
 }
 
+fn build_engine_command_tty(
+    engine: AgentEngine,
+    project_path: &Path,
+    prompt: &str,
+    sessions_dir: &Path,
+) -> CommandBuilder {
+    match engine {
+        AgentEngine::Codex => {
+            let mut command = CommandBuilder::new("codex");
+            command.arg("--full-auto");
+            command.arg("-C");
+            command.arg(project_path);
+            if !prompt.trim().is_empty() {
+                command.arg(prompt);
+            }
+            command.cwd(project_path.as_os_str());
+            command.env("CODEX_SESSIONS_DIR", sessions_dir);
+            command
+        }
+        AgentEngine::Claude => {
+            let mut command = CommandBuilder::new("claude");
+            command.arg("--dangerously-skip-permissions");
+            command.arg("--verbose");
+            if !prompt.trim().is_empty() {
+                command.arg(prompt);
+            }
+            command.cwd(project_path.as_os_str());
+            command
+        }
+    }
+}
+
 fn pipe_reader_thread(pipe: impl Read, mut file: File, ctx: PipeReaderContext) {
     let mut reader = BufReader::new(pipe);
     let mut line = String::new();
@@ -360,6 +681,79 @@ fn pipe_reader_thread(pipe: impl Read, mut file: File, ctx: PipeReaderContext) {
             }
             Err(_) => break,
         }
+    }
+}
+
+fn pty_reader_thread(mut reader: Box<dyn Read + Send>, file: File, ctx: PtyReaderContext) {
+    let mut writer = io::BufWriter::new(file);
+    let _ = writeln!(
+        writer,
+        "engine: {}\nproject: {}\nstarted_at: {:?}\n---",
+        ctx.engine.label(),
+        ctx.project_path.display(),
+        ctx.started_at
+    );
+    let _ = writer.flush();
+
+    let mut sent_session_meta = false;
+    let mut buf = vec![0u8; 16_384];
+    let mut line_buf: Vec<u8> = Vec::new();
+
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => break,
+        };
+
+        let chunk = &buf[..n];
+        let _ = writer.write_all(chunk);
+        let _ = writer.flush();
+
+        if let Ok(mut guard) = ctx.live_tx.lock() {
+            if let Some(tx) = guard.as_ref() {
+                if tx.send(chunk.to_vec()).is_err() {
+                    *guard = None;
+                }
+            }
+        }
+
+        if !sent_session_meta && ctx.engine == AgentEngine::Codex {
+            line_buf.extend_from_slice(chunk);
+
+            while let Some(pos) = line_buf.iter().position(|byte| *byte == b'\n') {
+                let line = line_buf.drain(..=pos).collect::<Vec<u8>>();
+                let Ok(line) = std::str::from_utf8(&line) else {
+                    continue;
+                };
+                if let Some((session_id, started_at)) = parse_session_meta_line(line.trim_end()) {
+                    sent_session_meta = true;
+                    let _ = ctx.tx.send(ProcessSignal::SessionMeta {
+                        process_id: ctx.process_id.clone(),
+                        session_id: session_id.clone(),
+                    });
+                    if let Some(log_path) = wait_for_session_log(
+                        &ctx.sessions_dir,
+                        &started_at,
+                        &session_id,
+                        SESSION_LOG_WAIT_TIMEOUT,
+                    ) {
+                        let _ = ctx.tx.send(ProcessSignal::SessionLogPath {
+                            process_id: ctx.process_id.clone(),
+                            log_path,
+                        });
+                    }
+                }
+            }
+
+            if line_buf.len() > 512 * 1024 {
+                line_buf.clear();
+            }
+        }
+    }
+
+    if let Ok(mut guard) = ctx.live_tx.lock() {
+        *guard = None;
     }
 }
 

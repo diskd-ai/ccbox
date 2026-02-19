@@ -8,8 +8,9 @@ Prototype features:
 - Full-screen **Projects** → **Sessions** → **Session Detail** timeline
 - “Online” dot (`●`) for recently modified projects/sessions
 - Delete project/session logs with confirmation
-- New Session prompt editor (`n`) that spawns Codex/Claude in the background
+- New Session prompt editor (`n`) that spawns Codex/Claude in `Pipes` or `TTY` mode
 - Processes screen (`P`) for stdout/stderr/log viewing + killing spawned agents
+- Attach/detach to spawned `TTY` sessions (`a` to attach, `Ctrl-]` to detach)
 - Auto-rescans when the sessions directory changes (file watcher)
 
 ## Install
@@ -67,7 +68,7 @@ What’s happening / features:
 
 What’s happening / features:
 - Paste/edit a prompt, then spawn Codex/Claude in the background.
-- `Shift+Tab` switches engine; `Ctrl+Enter`/`Cmd+Enter` sends.
+- `Shift+Tab` switches engine; `F4` switches `Pipes`/`TTY`; `Ctrl+Enter`/`Cmd+Enter` sends.
 
 ## Roadmap
 
@@ -150,9 +151,9 @@ Example prompts:
 - Lists: arrow keys move selection · `PgUp`/`PgDn` page
 - Projects: type to filter · `Esc` clears filter · `Enter` opens · `Space` result (newest session) · `Del` delete (confirm)
 - Sessions: `Enter` opens · `Space` result (last Out) · `n` new session · `Del`/`Backspace` delete (confirm) · `Esc` back
-- New Session: edit/paste · `Ctrl+Enter`/`Cmd+Enter` send · `Shift+Tab` switch engine · `Esc` cancel
+- New Session: edit/paste · `Ctrl+Enter`/`Cmd+Enter` send · `Shift+Tab` switch engine · `F4` switch `Pipes`/`TTY` · `Esc` cancel
 - Session Detail: `Enter` ToolOut (Tool call) · `o` result (last Out) · `c` visible context window · `Esc`/`Backspace` back
-- Processes: `s` stdout · `e` stderr · `l` log · `k` kill · `Enter` opens session (Codex only)
+- Processes: `a` attach (TTY) · `Ctrl-]` detach · `s` stdout · `e` stderr · `l` log · `k` kill · `Enter` opens session (Codex only)
 
 ## License
 

@@ -23,6 +23,28 @@ impl AgentEngine {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SpawnIoMode {
+    Pipes,
+    Tty,
+}
+
+impl SpawnIoMode {
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Pipes => Self::Tty,
+            Self::Tty => Self::Pipes,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pipes => "Pipes",
+            Self::Tty => "TTY",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionMeta {
     pub id: String,
