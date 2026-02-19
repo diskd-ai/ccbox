@@ -1617,7 +1617,7 @@ fn render_session_detail(
         .title(Title::from(Span::styled("Details", details_title_style)));
     let detail_inner = detail_block.inner(detail_area);
     let detail_viewport = detail_inner.height as usize;
-    let detail_total = detail_text.height();
+    let detail_total = estimate_wrapped_text_height(&detail_text, detail_inner.width);
     let max_scroll = detail_total.saturating_sub(detail_viewport);
     let scroll = (detail_view.details_scroll as usize).min(max_scroll);
     let scroll_u16 = u16::try_from(scroll).unwrap_or(u16::MAX);
@@ -1670,6 +1670,118 @@ fn render_session_detail(
     if detail_view.output_overlay_open {
         render_last_output_overlay(frame, full_area, detail_view);
     }
+}
+
+fn estimate_wrapped_text_height(text: &Text<'static>, wrap_width: u16) -> usize {
+    let wrap_width = wrap_width as usize;
+    if wrap_width == 0 {
+        return 0;
+    }
+
+    if text.lines.is_empty() {
+        return 1;
+    }
+
+    text.lines
+        .iter()
+        .map(|line| estimate_wrapped_line_height(line, wrap_width))
+        .sum()
+}
+
+fn estimate_wrapped_line_height(line: &Line<'static>, wrap_width: usize) -> usize {
+    if wrap_width == 0 {
+        return 0;
+    }
+    if line.spans.is_empty() {
+        return 1;
+    }
+
+    let mut rows = 1usize;
+    let mut col = 0usize;
+    let mut token_is_whitespace: Option<bool> = None;
+    let mut token_width = 0usize;
+    let mut token_chars: Vec<char> = Vec::new();
+
+    for span in &line.spans {
+        for ch in span.content.chars() {
+            let is_whitespace = ch.is_whitespace();
+
+            if token_is_whitespace.is_some_and(|ws| ws != is_whitespace) {
+                apply_wrap_token(
+                    wrap_width,
+                    token_is_whitespace.unwrap_or(false),
+                    &token_chars,
+                    token_width,
+                    &mut rows,
+                    &mut col,
+                );
+                token_chars.clear();
+                token_width = 0;
+            }
+
+            token_is_whitespace = Some(is_whitespace);
+            token_chars.push(ch);
+            token_width = token_width.saturating_add(display_char_width(ch));
+        }
+    }
+
+    if token_is_whitespace.is_some() {
+        apply_wrap_token(
+            wrap_width,
+            token_is_whitespace.unwrap_or(false),
+            &token_chars,
+            token_width,
+            &mut rows,
+            &mut col,
+        );
+    }
+
+    rows
+}
+
+fn apply_wrap_token(
+    wrap_width: usize,
+    _is_whitespace: bool,
+    token_chars: &[char],
+    token_width: usize,
+    rows: &mut usize,
+    col: &mut usize,
+) {
+    if wrap_width == 0 || token_chars.is_empty() || token_width == 0 {
+        return;
+    }
+
+    if token_width > wrap_width {
+        if *col > 0 {
+            *rows = rows.saturating_add(1);
+            *col = 0;
+        }
+        for ch in token_chars {
+            let w = display_char_width(*ch);
+            if w == 0 || w > wrap_width {
+                continue;
+            }
+            if *col + w > wrap_width {
+                *rows = rows.saturating_add(1);
+                *col = 0;
+            }
+            *col = col.saturating_add(w);
+        }
+        return;
+    }
+
+    if *col > 0 && *col + token_width > wrap_width {
+        *rows = rows.saturating_add(1);
+        *col = 0;
+    }
+    *col = col.saturating_add(token_width);
+}
+
+fn display_char_width(ch: char) -> usize {
+    if ch == '\t' {
+        return 4;
+    }
+    UnicodeWidthChar::width(ch).unwrap_or(0)
 }
 
 fn session_detail_footer_line(
