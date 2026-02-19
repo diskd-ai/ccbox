@@ -69,7 +69,7 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
     }
 
     if let Some(menu) = &model.system_menu {
-        render_system_menu_overlay(frame, content_area, menu);
+        render_main_menu_overlay(frame, content_area, model, menu);
     }
 
     if model.help_open {
@@ -104,33 +104,48 @@ fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
     let bg = Color::DarkGray;
     let base_style = Style::default().fg(Color::White).bg(bg);
     let hint_style = Style::default().fg(Color::Gray).bg(bg);
-    let menu_open = model.system_menu.is_some();
-    let system_style = if menu_open {
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::White)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(Color::White)
-            .bg(bg)
-            .add_modifier(Modifier::BOLD)
-    };
+    let menu_open_index = model.system_menu.as_ref().map(|menu| menu.menu_index);
+    let menus = crate::app::main_menus_for_view(&model.view);
+    let active_style = Style::default()
+        .fg(Color::Black)
+        .bg(Color::White)
+        .add_modifier(Modifier::BOLD);
+    let inactive_style = Style::default()
+        .fg(Color::White)
+        .bg(bg)
+        .add_modifier(Modifier::BOLD);
 
-    let system_label = "  📦 System ";
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::styled("  ".to_string(), base_style));
+
+    for (idx, menu) in menus.iter().enumerate() {
+        let label = format!(" {} ", menu.label());
+        let style = if menu_open_index == Some(idx) {
+            active_style
+        } else {
+            inactive_style
+        };
+        spans.push(Span::styled(label, style));
+        spans.push(Span::styled(" ".to_string(), base_style));
+    }
+
     let hint = "(F2)";
+    let left_width: usize = spans
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum();
+    let hint_width = UnicodeWidthStr::width(hint);
+    let width = bar_area.width as usize;
 
-    let used_width = UnicodeWidthStr::width(system_label)
-        + UnicodeWidthStr::width("  ")
-        + UnicodeWidthStr::width(hint);
-    let remaining = (bar_area.width as usize).saturating_sub(used_width);
-
-    let spans = vec![
-        Span::styled(system_label.to_string(), system_style),
-        Span::styled("  ".to_string(), base_style),
-        Span::styled(hint.to_string(), hint_style),
-        Span::styled(" ".repeat(remaining), base_style),
-    ];
+    if width > left_width + hint_width {
+        spans.push(Span::styled(
+            " ".repeat(width - left_width - hint_width),
+            base_style,
+        ));
+        spans.push(Span::styled(hint.to_string(), hint_style));
+    } else if width > left_width {
+        spans.push(Span::styled(" ".repeat(width - left_width), base_style));
+    }
 
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(base_style),
@@ -138,36 +153,61 @@ fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
     );
 }
 
-fn render_system_menu_overlay(frame: &mut Frame, area: Rect, menu: &crate::app::SystemMenuOverlay) {
+fn render_main_menu_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    model: &AppModel,
+    menu: &crate::app::SystemMenuOverlay,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let items = crate::app::SYSTEM_MENU_ITEMS;
+    let menus = crate::app::main_menus_for_view(&model.view);
+    if menus.is_empty() {
+        return;
+    }
+
+    let menu_index = menu.menu_index.min(menus.len().saturating_sub(1));
+    let active = menus[menu_index];
+    let items = crate::app::main_menu_items(active);
+    let title = active.label();
+
     let max_label_width = items
         .iter()
-        .map(|item| UnicodeWidthStr::width(item.label()))
+        .map(|item| UnicodeWidthStr::width(item.label))
         .max()
         .unwrap_or(0);
     let max_hotkey_width = items
         .iter()
-        .map(|item| UnicodeWidthStr::width(item.hotkey()))
+        .map(|item| UnicodeWidthStr::width(item.hotkey))
         .max()
         .unwrap_or(0);
+    let title_width = UnicodeWidthStr::width(title);
 
     let inner_width = max_label_width
         .saturating_add(2)
         .saturating_add(max_hotkey_width)
+        .max(title_width)
         .max(18);
     let desired_width = inner_width.saturating_add(4);
 
     let popup_width = (desired_width as u16).min(area.width);
     let popup_height = (items.len() as u16).saturating_add(2).min(area.height);
+
+    let mut x_offset = UnicodeWidthStr::width("  ");
+    for menu in menus.iter().take(menu_index) {
+        let label = format!(" {} ", menu.label());
+        x_offset = x_offset.saturating_add(UnicodeWidthStr::width(label.as_str()));
+        x_offset = x_offset.saturating_add(1);
+    }
+
     let max_x = area
         .x
         .saturating_add(area.width.saturating_sub(popup_width));
+    let popup_x = area.x.saturating_add(x_offset as u16).min(max_x);
     let popup = Rect {
-        x: area.x.saturating_add(2).min(max_x),
+        x: popup_x,
         y: area.y,
         width: popup_width,
         height: popup_height,
@@ -178,15 +218,15 @@ fn render_system_menu_overlay(frame: &mut Frame, area: Rect, menu: &crate::app::
     let block = Block::default()
         .borders(Borders::ALL)
         .padding(Padding::horizontal(1))
-        .title("📦 System");
+        .title(title);
 
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
     let mut list_items: Vec<ListItem> = Vec::new();
     for item in items {
-        let label = item.label();
-        let hotkey = item.hotkey();
+        let label = item.label;
+        let hotkey = item.hotkey;
 
         let label_width = UnicodeWidthStr::width(label);
         let hotkey_width = UnicodeWidthStr::width(hotkey);
@@ -222,7 +262,7 @@ fn render_system_menu_overlay(frame: &mut Frame, area: Rect, menu: &crate::app::
         .highlight_symbol("");
 
     let mut state = ListState::default();
-    state.select(Some(menu.selected.min(items.len().saturating_sub(1))));
+    state.select(Some(menu.item_index.min(items.len().saturating_sub(1))));
     frame.render_stateful_widget(list, inner, &mut state);
 }
 
@@ -2742,7 +2782,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from("Global"),
         Line::from("  - Ctrl+R: rescan sessions"),
-        Line::from("  - F2: system menu"),
+        Line::from("  - F2: main menu"),
         Line::from("  - P: processes"),
         Line::from("  - Auto-rescan: watches sessions dir"),
         Line::from("  - Ctrl+Q or Ctrl+C: quit"),

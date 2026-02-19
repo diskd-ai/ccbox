@@ -372,43 +372,386 @@ pub struct SessionStatsOverlay {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SystemMenuItem {
-    Rescan,
+pub enum MainMenu {
+    System,
+    Projects,
+    Sessions,
+    NewSession,
+    Session,
     Processes,
-    Help,
-    Quit,
+    ProcessOutput,
+    Error,
 }
 
-impl SystemMenuItem {
+impl MainMenu {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Rescan => "Rescan sessions",
+            Self::System => "📦 System",
+            Self::Projects => "Projects",
+            Self::Sessions => "Sessions",
+            Self::NewSession => "New Session",
+            Self::Session => "Session",
             Self::Processes => "Processes",
-            Self::Help => "Help",
-            Self::Quit => "Quit",
-        }
-    }
-
-    pub fn hotkey(self) -> &'static str {
-        match self {
-            Self::Rescan => "Ctrl+R",
-            Self::Processes => "P",
-            Self::Help => "F1 or ?",
-            Self::Quit => "Ctrl+Q or Ctrl+C",
+            Self::ProcessOutput => "Output",
+            Self::Error => "Error",
         }
     }
 }
 
-pub const SYSTEM_MENU_ITEMS: [SystemMenuItem; 4] = [
-    SystemMenuItem::Rescan,
-    SystemMenuItem::Processes,
-    SystemMenuItem::Help,
-    SystemMenuItem::Quit,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MainMenuKey {
+    pub code: KeyCode,
+    pub modifiers: KeyModifiers,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MainMenuEntry {
+    pub label: &'static str,
+    pub hotkey: &'static str,
+    pub key: MainMenuKey,
+}
+
+pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 4] = [
+    MainMenuEntry {
+        label: "Rescan sessions",
+        hotkey: "Ctrl+R",
+        key: MainMenuKey {
+            code: KeyCode::Char('r'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Processes",
+        hotkey: "P",
+        key: MainMenuKey {
+            code: KeyCode::Char('P'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Help",
+        hotkey: "F1 or ?",
+        key: MainMenuKey {
+            code: KeyCode::F(1),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Quit",
+        hotkey: "Ctrl+Q or Ctrl+C",
+        key: MainMenuKey {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
 ];
+
+pub const MAIN_MENU_PROJECTS_ITEMS: [MainMenuEntry; 4] = [
+    MainMenuEntry {
+        label: "Open",
+        hotkey: "Enter",
+        key: MainMenuKey {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Result (newest Out)",
+        hotkey: "Space",
+        key: MainMenuKey {
+            code: KeyCode::Char(' '),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Delete project logs",
+        hotkey: "Del",
+        key: MainMenuKey {
+            code: KeyCode::Delete,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Clear filter",
+        hotkey: "Esc",
+        key: MainMenuKey {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+];
+
+pub const MAIN_MENU_SESSIONS_ITEMS: [MainMenuEntry; 6] = [
+    MainMenuEntry {
+        label: "Open",
+        hotkey: "Enter",
+        key: MainMenuKey {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Result (last Out)",
+        hotkey: "Space",
+        key: MainMenuKey {
+            code: KeyCode::Char(' '),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Stats",
+        hotkey: "F3",
+        key: MainMenuKey {
+            code: KeyCode::F(3),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "New Session",
+        hotkey: "Ctrl+N or Cmd+N",
+        key: MainMenuKey {
+            code: KeyCode::Char('n'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Delete session log",
+        hotkey: "Del",
+        key: MainMenuKey {
+            code: KeyCode::Delete,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Back / Clear filter",
+        hotkey: "Esc",
+        key: MainMenuKey {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+];
+
+pub const MAIN_MENU_NEW_SESSION_ITEMS: [MainMenuEntry; 3] = [
+    MainMenuEntry {
+        label: "Send",
+        hotkey: "Ctrl+Enter or Cmd+Enter",
+        key: MainMenuKey {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Switch engine",
+        hotkey: "Shift+Tab",
+        key: MainMenuKey {
+            code: KeyCode::BackTab,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Cancel",
+        hotkey: "Esc",
+        key: MainMenuKey {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+];
+
+pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 5] = [
+    MainMenuEntry {
+        label: "Jump Tool -> ToolOut",
+        hotkey: "Enter",
+        key: MainMenuKey {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Result (last Out)",
+        hotkey: "o",
+        key: MainMenuKey {
+            code: KeyCode::Char('o'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Stats",
+        hotkey: "F3",
+        key: MainMenuKey {
+            code: KeyCode::F(3),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Visible Context",
+        hotkey: "c",
+        key: MainMenuKey {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Back",
+        hotkey: "Esc or Backspace",
+        key: MainMenuKey {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+];
+
+pub const MAIN_MENU_PROCESSES_ITEMS: [MainMenuEntry; 6] = [
+    MainMenuEntry {
+        label: "Open stdout",
+        hotkey: "s",
+        key: MainMenuKey {
+            code: KeyCode::Char('s'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Open stderr",
+        hotkey: "e",
+        key: MainMenuKey {
+            code: KeyCode::Char('e'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Open log",
+        hotkey: "l",
+        key: MainMenuKey {
+            code: KeyCode::Char('l'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Kill process",
+        hotkey: "k",
+        key: MainMenuKey {
+            code: KeyCode::Char('k'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Open session",
+        hotkey: "Enter",
+        key: MainMenuKey {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Back",
+        hotkey: "Esc or Backspace",
+        key: MainMenuKey {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+];
+
+pub const MAIN_MENU_PROCESS_OUTPUT_ITEMS: [MainMenuEntry; 5] = [
+    MainMenuEntry {
+        label: "stdout",
+        hotkey: "s",
+        key: MainMenuKey {
+            code: KeyCode::Char('s'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "stderr",
+        hotkey: "e",
+        key: MainMenuKey {
+            code: KeyCode::Char('e'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "log",
+        hotkey: "l",
+        key: MainMenuKey {
+            code: KeyCode::Char('l'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Kill process",
+        hotkey: "k",
+        key: MainMenuKey {
+            code: KeyCode::Char('k'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Back",
+        hotkey: "Esc or Backspace",
+        key: MainMenuKey {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+];
+
+pub const MAIN_MENU_ERROR_ITEMS: [MainMenuEntry; 2] = [
+    MainMenuEntry {
+        label: "Back",
+        hotkey: "Esc or Backspace",
+        key: MainMenuKey {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Rescan sessions",
+        hotkey: "Ctrl+R",
+        key: MainMenuKey {
+            code: KeyCode::Char('r'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+];
+
+pub const MAIN_MENUS_PROJECTS: [MainMenu; 2] = [MainMenu::System, MainMenu::Projects];
+pub const MAIN_MENUS_SESSIONS: [MainMenu; 2] = [MainMenu::System, MainMenu::Sessions];
+pub const MAIN_MENUS_NEW_SESSION: [MainMenu; 2] = [MainMenu::System, MainMenu::NewSession];
+pub const MAIN_MENUS_SESSION_DETAIL: [MainMenu; 2] = [MainMenu::System, MainMenu::Session];
+pub const MAIN_MENUS_PROCESSES: [MainMenu; 2] = [MainMenu::System, MainMenu::Processes];
+pub const MAIN_MENUS_PROCESS_OUTPUT: [MainMenu; 2] = [MainMenu::System, MainMenu::ProcessOutput];
+pub const MAIN_MENUS_ERROR: [MainMenu; 2] = [MainMenu::System, MainMenu::Error];
+
+pub fn main_menus_for_view(view: &View) -> &'static [MainMenu] {
+    match view {
+        View::Projects(_) => &MAIN_MENUS_PROJECTS,
+        View::Sessions(_) => &MAIN_MENUS_SESSIONS,
+        View::NewSession(_) => &MAIN_MENUS_NEW_SESSION,
+        View::SessionDetail(_) => &MAIN_MENUS_SESSION_DETAIL,
+        View::Processes(_) => &MAIN_MENUS_PROCESSES,
+        View::ProcessOutput(_) => &MAIN_MENUS_PROCESS_OUTPUT,
+        View::Error => &MAIN_MENUS_ERROR,
+    }
+}
+
+pub fn main_menu_items(menu: MainMenu) -> &'static [MainMenuEntry] {
+    match menu {
+        MainMenu::System => &MAIN_MENU_SYSTEM_ITEMS,
+        MainMenu::Projects => &MAIN_MENU_PROJECTS_ITEMS,
+        MainMenu::Sessions => &MAIN_MENU_SESSIONS_ITEMS,
+        MainMenu::NewSession => &MAIN_MENU_NEW_SESSION_ITEMS,
+        MainMenu::Session => &MAIN_MENU_SESSION_ITEMS,
+        MainMenu::Processes => &MAIN_MENU_PROCESSES_ITEMS,
+        MainMenu::ProcessOutput => &MAIN_MENU_PROCESS_OUTPUT_ITEMS,
+        MainMenu::Error => &MAIN_MENU_ERROR_ITEMS,
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct SystemMenuOverlay {
-    pub selected: usize,
+    pub menu_index: usize,
+    pub item_index: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -685,7 +1028,10 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         if model.system_menu.is_some() {
             model.system_menu = None;
         } else {
-            model.system_menu = Some(SystemMenuOverlay { selected: 0 });
+            model.system_menu = Some(SystemMenuOverlay {
+                menu_index: 0,
+                item_index: 0,
+            });
             model.help_open = false;
         }
         return (model, AppCommand::None);
@@ -750,39 +1096,51 @@ fn update_system_menu_overlay(
     mut menu: SystemMenuOverlay,
     key: KeyEvent,
 ) -> (AppModel, AppCommand) {
+    let menus = main_menus_for_view(&model.view);
+    if menus.is_empty() {
+        model.system_menu = None;
+        return (model, AppCommand::None);
+    }
+
+    menu.menu_index = menu.menu_index.min(menus.len().saturating_sub(1));
+
     match key.code {
         KeyCode::Esc | KeyCode::Backspace => {
             model.system_menu = None;
             return (model, AppCommand::None);
         }
+        KeyCode::Left => {
+            menu.menu_index = if menu.menu_index == 0 {
+                menus.len().saturating_sub(1)
+            } else {
+                menu.menu_index.saturating_sub(1)
+            };
+            menu.item_index = 0;
+        }
+        KeyCode::Right => {
+            menu.menu_index = (menu.menu_index + 1) % menus.len();
+            menu.item_index = 0;
+        }
         KeyCode::Up => {
-            menu.selected = menu.selected.saturating_sub(1);
+            menu.item_index = menu.item_index.saturating_sub(1);
         }
         KeyCode::Down => {
-            menu.selected = (menu.selected + 1).min(SYSTEM_MENU_ITEMS.len().saturating_sub(1));
+            let active = menus[menu.menu_index];
+            let items = main_menu_items(active);
+            menu.item_index = (menu.item_index + 1).min(items.len().saturating_sub(1));
         }
         KeyCode::Enter => {
-            let Some(item) = SYSTEM_MENU_ITEMS.get(menu.selected).copied() else {
+            let active = menus[menu.menu_index];
+            let items = main_menu_items(active);
+            let Some(entry) = items.get(menu.item_index).copied() else {
                 model.system_menu = None;
                 return (model, AppCommand::None);
             };
 
             model.system_menu = None;
 
-            match item {
-                SystemMenuItem::Rescan => return (model, AppCommand::Rescan),
-                SystemMenuItem::Processes => {
-                    if !matches!(&model.view, View::Processes(_) | View::ProcessOutput(_)) {
-                        open_processes_view(&mut model);
-                    }
-                    return (model, AppCommand::None);
-                }
-                SystemMenuItem::Help => {
-                    model.help_open = true;
-                    return (model, AppCommand::None);
-                }
-                SystemMenuItem::Quit => return (model, AppCommand::Quit),
-            }
+            let key = KeyEvent::new(entry.key.code, entry.key.modifiers);
+            return update_on_key(model, key);
         }
         _ => {}
     }
