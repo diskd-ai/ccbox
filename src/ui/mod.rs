@@ -2889,7 +2889,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from("Global"),
         Line::from("  - Ctrl+R: rescan sessions"),
-        Line::from("  - F2: main menu"),
+        Line::from("  - F2: system menu"),
         Line::from("  - P: processes"),
         Line::from("  - Auto-rescan: watches sessions dir"),
         Line::from("  - Ctrl+Q or Ctrl+C: quit"),
