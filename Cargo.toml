@@ -20,6 +20,10 @@ time = { version = "0.3.41", features = ["formatting", "macros", "parsing"] }
 ureq = { version = "3.2.0", features = ["json"] }
 unicode-width = "0.2.0"
 walkdir = "2.5.0"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+sqlx = { version = "0.8.3", default-features = false, features = ["macros", "migrate", "sqlite", "runtime-tokio-rustls"] }
+tokio = { version = "1.43.0", features = ["rt-multi-thread"] }
+uuid = { version = "1.15.1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3.12.0"

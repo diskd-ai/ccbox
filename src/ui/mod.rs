@@ -60,6 +60,13 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
         View::SessionDetail(detail_view) => {
             render_session_detail(frame, content_area, model, detail_view)
         }
+        View::Tasks(tasks_view) => render_tasks(frame, content_area, model, tasks_view),
+        View::TaskCreate(task_create_view) => {
+            render_task_create(frame, content_area, model, task_create_view)
+        }
+        View::TaskDetail(task_detail_view) => {
+            render_task_detail(frame, content_area, model, task_detail_view)
+        }
         View::Processes(processes_view) => {
             render_processes(frame, content_area, model, processes_view)
         }
@@ -83,6 +90,10 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
 
     if let Some(confirm) = &model.delete_session_confirm {
         render_delete_session_confirm_overlay(frame, content_area, model, confirm);
+    }
+
+    if let Some(confirm) = &model.delete_task_confirm {
+        render_delete_task_confirm_overlay(frame, content_area, model, confirm);
     }
 
     if let Some(preview) = &model.session_result_preview {
@@ -569,6 +580,142 @@ fn render_sessions(
     );
 }
 
+fn render_tasks(
+    frame: &mut Frame,
+    area: Rect,
+    model: &AppModel,
+    tasks_view: &crate::app::TasksView,
+) {
+    let area = inner_area(area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let search_text = if tasks_view.query.is_empty() {
+        Text::from(Line::from(Span::styled(
+            "Type to filter tasks…",
+            Style::default().fg(Color::DarkGray),
+        )))
+    } else {
+        Text::from(tasks_view.query.as_str())
+    };
+    let search = Paragraph::new(search_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .padding(Padding::horizontal(1))
+            .title("Find Tasks"),
+    );
+    frame.render_widget(search, chunks[0]);
+
+    let tasks = &tasks_view.tasks;
+    let filtered_indices = &tasks_view.filtered_indices;
+
+    if filtered_indices.is_empty() {
+        let message = if tasks_view.query.trim().is_empty() {
+            "No tasks found."
+        } else {
+            "No matching tasks. Press Esc to clear the filter."
+        };
+        let empty = Paragraph::new(message).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .padding(Padding::horizontal(1))
+                .title("Tasks"),
+        );
+        frame.render_widget(empty, chunks[1]);
+    } else {
+        let list_area = chunks[1];
+        let max_width = (list_area.width as usize).saturating_sub(6);
+        let (images_col_width, modified_col_width) =
+            tasks_right_columns_width(tasks, filtered_indices);
+        let list_items: Vec<ListItem> = filtered_indices
+            .iter()
+            .copied()
+            .filter_map(|task_index| {
+                tasks.get(task_index).map(|task| {
+                    task_list_item(
+                        task,
+                        max_width,
+                        images_col_width,
+                        modified_col_width,
+                        &tasks_view.query,
+                    )
+                })
+            })
+            .collect();
+
+        let list_title = format!("Tasks · {} total · newest first", tasks.len());
+        let list = List::new(list_items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .padding(Padding::horizontal(1))
+                    .title(list_title),
+            )
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("▸ ");
+
+        let mut state = ListState::default();
+        state.select(Some(
+            tasks_view
+                .selected
+                .min(filtered_indices.len().saturating_sub(1)),
+        ));
+        frame.render_stateful_widget(list, list_area, &mut state);
+    }
+
+    let footer_text = "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Ctrl+Enter/Cmd+Enter=spawn  n=new  Del=delete  Backspace=edit  Esc=clear/back  Ctrl+4/Cmd+4=tasks  Ctrl+T/Cmd+T=new  F3=stats";
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::raw(footer_text.to_string()));
+    if let Some(notice) = model.notice.as_deref() {
+        if !notice.trim().is_empty() {
+            spans.push(Span::raw(format!("  ·  {notice}")));
+        }
+    }
+    if let Some(hint) = model.update_hint.as_deref() {
+        if !hint.trim().is_empty() {
+            spans.push(Span::raw("  ·  "));
+            spans.push(Span::styled(
+                hint.to_string(),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
+    spans.push(Span::raw("  ·  "));
+    spans.push(Span::styled(
+        format!("Engine: {}", tasks_view.engine.label()),
+        Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::styled(
+        " (Shift+Tab)".to_string(),
+        Style::default().fg(Color::Blue),
+    ));
+    if processes_running(model) {
+        spans.push(Span::raw("  ·  "));
+        spans.push(Span::styled(
+            "P●".to_string(),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(footer, chunks[2]);
+}
+
 fn render_new_session(
     frame: &mut Frame,
     area: Rect,
@@ -696,6 +843,328 @@ fn render_new_session(
     spans.push(Span::raw("  ·  "));
     spans.push(Span::styled(
         format!("Engine: {}", new_session_view.engine.label()),
+        Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::styled(
+        " (Shift+Tab)".to_string(),
+        Style::default().fg(Color::Blue),
+    ));
+    if processes_running(model) {
+        spans.push(Span::raw("  ·  "));
+        spans.push(Span::styled(
+            "P●".to_string(),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(footer, chunks[2]);
+}
+
+fn render_task_create(
+    frame: &mut Frame,
+    area: Rect,
+    model: &AppModel,
+    task_create_view: &crate::app::TaskCreateView,
+) {
+    let area = inner_area(area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let project_path_label = if task_create_view.project_path.as_os_str().is_empty() {
+        "(project path not set)".to_string()
+    } else {
+        task_create_view.project_path.display().to_string()
+    };
+    let title = format!("New Task · {project_path_label}");
+    let header_hint = "Write a task, then press Ctrl+S (or Cmd+S) to save. Ctrl+I inserts [Image N]. Ctrl+P edits project path.";
+    let header = Paragraph::new(truncate_end(
+        header_hint,
+        (chunks[0].width as usize).saturating_sub(4),
+    ))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .padding(Padding::horizontal(1))
+            .title(title),
+    );
+    frame.render_widget(header, chunks[0]);
+
+    let editor_area = chunks[1];
+    let editor_block = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .title("Task");
+    let editor_inner = editor_block.inner(editor_area);
+    frame.render_widget(editor_block, editor_area);
+
+    if editor_inner.width > 0 && editor_inner.height > 0 {
+        let visible_height = editor_inner.height as usize;
+        let cursor_row = task_create_view.editor.cursor_row;
+        let scroll_row = cursor_row.saturating_sub(visible_height.saturating_sub(1));
+
+        let mut lines = Vec::new();
+        for offset in 0..visible_height {
+            let index = scroll_row + offset;
+            match task_create_view.editor.lines.get(index) {
+                Some(line) => lines.push(Line::from(line.clone())),
+                None => lines.push(Line::from("")),
+            }
+        }
+
+        if task_create_view.editor.lines.len() == 1 && task_create_view.editor.lines[0].is_empty() {
+            lines.clear();
+            lines.push(Line::from(Span::styled(
+                "Type or paste a task…",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        let paragraph = Paragraph::new(lines);
+        frame.render_widget(paragraph, editor_inner);
+
+        if task_create_view.overlay.is_none() {
+            let cursor_line = task_create_view
+                .editor
+                .lines
+                .get(cursor_row)
+                .map(|line| line.as_str())
+                .unwrap_or("");
+            let cursor_col = task_create_view.editor.cursor_col;
+            let cursor_y = cursor_row.saturating_sub(scroll_row);
+            if cursor_y < visible_height {
+                let mut x_offset = 0u16;
+                for (idx, ch) in cursor_line.chars().enumerate() {
+                    if idx >= cursor_col {
+                        break;
+                    }
+                    x_offset =
+                        x_offset.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(0) as u16);
+                }
+
+                let x = editor_inner.x.saturating_add(x_offset).min(
+                    editor_inner
+                        .x
+                        .saturating_add(editor_inner.width.saturating_sub(1)),
+                );
+                let y = editor_inner.y.saturating_add(cursor_y as u16);
+                frame.set_cursor_position(Position { x, y });
+            }
+        }
+    }
+
+    let footer_text = "Keys: edit text  Ctrl+S/Cmd+S=save  Ctrl+I/Cmd+I=insert image  Ctrl+P/Cmd+P=project path  Esc=cancel  Ctrl+Q/Ctrl+C=quit  F1/?=help";
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::raw(footer_text.to_string()));
+    if let Some(notice) = model.notice.as_deref() {
+        if !notice.trim().is_empty() {
+            spans.push(Span::raw(format!("  ·  {notice}")));
+        }
+    }
+    if let Some(hint) = model.update_hint.as_deref() {
+        if !hint.trim().is_empty() {
+            spans.push(Span::raw("  ·  "));
+            spans.push(Span::styled(
+                hint.to_string(),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
+    spans.push(Span::raw("  ·  "));
+    spans.push(Span::styled(
+        format!("Images: {}", task_create_view.image_paths.len()),
+        Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+    ));
+    if processes_running(model) {
+        spans.push(Span::raw("  ·  "));
+        spans.push(Span::styled(
+            "P●".to_string(),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(footer, chunks[2]);
+
+    if let Some(overlay) = &task_create_view.overlay {
+        render_task_create_overlay(frame, area, overlay);
+    }
+}
+
+fn render_task_create_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    overlay: &crate::app::TaskCreateOverlay,
+) {
+    let (title, editor) = match overlay {
+        crate::app::TaskCreateOverlay::ImagePath(editor) => ("Insert Image Path", editor),
+        crate::app::TaskCreateOverlay::ProjectPath(editor) => ("Project Path", editor),
+    };
+
+    let popup = centered_rect(72, 24, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .title(title);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+    let input_text = if editor.text.is_empty() {
+        Text::from(Line::from(Span::styled(
+            "Type a path…",
+            Style::default().fg(Color::DarkGray),
+        )))
+    } else {
+        Text::from(editor.text.as_str())
+    };
+
+    let input = Paragraph::new(input_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .padding(Padding::horizontal(1))
+            .title("Path"),
+    );
+    frame.render_widget(input, chunks[0]);
+
+    let hint = Paragraph::new("Keys: Enter=confirm  Esc=cancel  Backspace=delete")
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    frame.render_widget(hint, chunks[1]);
+
+    let input_inner = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .title("Path")
+        .inner(chunks[0]);
+    if input_inner.width > 0 {
+        let mut x_offset = 0u16;
+        for (idx, ch) in editor.text.chars().enumerate() {
+            if idx >= editor.cursor_col {
+                break;
+            }
+            x_offset = x_offset.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(0) as u16);
+        }
+        let x = input_inner.x.saturating_add(x_offset).min(
+            input_inner
+                .x
+                .saturating_add(input_inner.width.saturating_sub(1)),
+        );
+        let y = input_inner.y;
+        frame.set_cursor_position(Position { x, y });
+    }
+}
+
+fn render_task_detail(
+    frame: &mut Frame,
+    area: Rect,
+    model: &AppModel,
+    task_detail_view: &crate::app::TaskDetailView,
+) {
+    let area = inner_area(area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let title_hint = format!(
+        "Task · {} ({})",
+        crate::domain::derive_task_title(&task_detail_view.task.body),
+        task_detail_view.task.project_path.display()
+    );
+    let title_hint = truncate_end(&title_hint, (chunks[0].width as usize).saturating_sub(4));
+    let header_hint = "Ctrl+Enter spawns. Shift+Tab switches engine. Del deletes. Esc closes.";
+    let header = Paragraph::new(truncate_end(
+        header_hint,
+        (chunks[0].width as usize).saturating_sub(4),
+    ))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .padding(Padding::horizontal(1))
+            .title(title_hint),
+    );
+    frame.render_widget(header, chunks[0]);
+
+    let mut content = task_detail_view.task.body.clone();
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push('\n');
+    content.push_str("Images:\n");
+    if task_detail_view.images.is_empty() {
+        content.push_str("(none)\n");
+    } else {
+        for image in &task_detail_view.images {
+            content.push_str(&format!(
+                "[Image {}] {}\n",
+                image.ordinal,
+                image.source_path.display()
+            ));
+        }
+    }
+
+    let body = Paragraph::new(content)
+        .wrap(Wrap { trim: false })
+        .scroll((task_detail_view.scroll, 0))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .padding(Padding::horizontal(1))
+                .title("Task"),
+        );
+    frame.render_widget(body, chunks[1]);
+
+    let footer_text = "Keys: arrows=scroll  PgUp/PgDn=page  Ctrl+Enter/Cmd+Enter=spawn  Shift+Tab=engine  Del=delete  Esc/Backspace=back  Ctrl+Q/Ctrl+C=quit  F1/?=help  F3=stats";
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::raw(footer_text.to_string()));
+    if let Some(notice) = model.notice.as_deref() {
+        if !notice.trim().is_empty() {
+            spans.push(Span::raw(format!("  ·  {notice}")));
+        }
+    }
+    if let Some(hint) = model.update_hint.as_deref() {
+        if !hint.trim().is_empty() {
+            spans.push(Span::raw("  ·  "));
+            spans.push(Span::styled(
+                hint.to_string(),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
+    spans.push(Span::raw("  ·  "));
+    spans.push(Span::styled(
+        format!("Engine: {}", task_detail_view.engine.label()),
         Style::default()
             .fg(Color::Blue)
             .add_modifier(Modifier::BOLD),
@@ -1014,6 +1483,28 @@ fn session_right_columns_width_filtered(
     }
 
     (size_col_width, modified_col_width)
+}
+
+fn tasks_right_columns_width(
+    tasks: &[crate::app::TaskSummaryRow],
+    indices: &[usize],
+) -> (usize, usize) {
+    let mut images_col_width = 0usize;
+    let mut modified_col_width = 0usize;
+
+    for task_index in indices {
+        let Some(task) = tasks.get(*task_index) else {
+            continue;
+        };
+
+        let images = format!("{} img", task.image_count);
+        images_col_width = images_col_width.max(UnicodeWidthStr::width(images.as_str()));
+
+        let modified = relative_time_ago(Some(task.updated_at));
+        modified_col_width = modified_col_width.max(UnicodeWidthStr::width(modified.as_str()));
+    }
+
+    (images_col_width, modified_col_width)
 }
 
 fn process_right_columns_width(processes: &[crate::app::ProcessInfo]) -> (usize, usize) {
@@ -1348,6 +1839,95 @@ fn session_list_item(
     spans.extend(highlight_query_spans(&title, query, Style::default()));
     spans.push(Span::raw(" ".repeat(padding_width)));
     spans.push(Span::styled(size, Style::default().fg(Color::DarkGray)));
+    spans.push(Span::styled(
+        column_sep,
+        Style::default().fg(Color::DarkGray),
+    ));
+    spans.push(Span::styled(modified, Style::default().fg(Color::DarkGray)));
+
+    ListItem::new(Line::from(spans))
+}
+
+fn task_list_item(
+    task: &crate::app::TaskSummaryRow,
+    max_width: usize,
+    images_col_width: usize,
+    modified_col_width: usize,
+    query: &str,
+) -> ListItem<'static> {
+    if max_width == 0 {
+        return ListItem::new(Line::from(""));
+    }
+
+    let title = task.title.as_str();
+    let path = task.project_path.display().to_string();
+
+    let images = format!("{} img", task.image_count);
+    let images = pad_left(&images, images_col_width);
+
+    let modified = relative_time_ago(Some(task.updated_at));
+    let modified = pad_left(&modified, modified_col_width);
+
+    let column_sep = "  ·  ";
+    let right_width = images_col_width + UnicodeWidthStr::width(column_sep) + modified_col_width;
+
+    let min_left = 8usize;
+    let gap = 2usize;
+    if right_width + gap + min_left >= max_width {
+        let title = truncate_end(title, max_width);
+        let spans =
+            highlight_query_spans(&title, query, Style::default().add_modifier(Modifier::BOLD));
+        return ListItem::new(Line::from(spans));
+    }
+
+    let left_available = max_width.saturating_sub(right_width + gap);
+
+    let separator = "  ·  ";
+    let separator_width = UnicodeWidthStr::width(separator);
+    let min_path = 8usize;
+
+    let mut spans = Vec::new();
+    let mut left_width = 0usize;
+
+    if left_available >= min_left + separator_width + min_path {
+        let title_budget = left_available.saturating_sub(separator_width + min_path);
+        let title = truncate_end(title, title_budget.max(min_left));
+        let title_width = UnicodeWidthStr::width(title.as_str());
+        spans.extend(highlight_query_spans(
+            &title,
+            query,
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+        left_width += title_width;
+
+        let path_budget = left_available
+            .saturating_sub(left_width)
+            .saturating_sub(separator_width);
+        let path = truncate_middle(path.as_str(), path_budget);
+        let path_width = UnicodeWidthStr::width(path.as_str());
+        if !path.is_empty() {
+            spans.push(Span::raw(separator));
+            spans.extend(highlight_query_spans(
+                &path,
+                query,
+                Style::default().fg(Color::DarkGray),
+            ));
+            left_width += separator_width + path_width;
+        }
+    } else {
+        let title = truncate_end(title, left_available);
+        let title_width = UnicodeWidthStr::width(title.as_str());
+        spans.extend(highlight_query_spans(
+            &title,
+            query,
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+        left_width += title_width;
+    }
+
+    let padding_width = max_width.saturating_sub(left_width + right_width);
+    spans.push(Span::raw(" ".repeat(padding_width)));
+    spans.push(Span::styled(images, Style::default().fg(Color::DarkGray)));
     spans.push(Span::styled(
         column_sep,
         Style::default().fg(Color::DarkGray),
@@ -3340,6 +3920,8 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from("Global"),
         Line::from("  - Ctrl+R: rescan sessions"),
+        Line::from("  - Ctrl+4/Cmd+4: open Tasks"),
+        Line::from("  - Ctrl+T/Cmd+T: New Task"),
         Line::from("  - F2: system menu"),
         Line::from("  - P: processes"),
         Line::from("  - Auto-rescan: watches sessions dir"),
@@ -3356,6 +3938,10 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - Sessions: Ctrl+N/Cmd+N opens New Session"),
         Line::from("  - Sessions: F3 shows Stats"),
         Line::from("  - New Session: Ctrl+Enter/Cmd+Enter sends, Shift+Tab switches engine"),
+        Line::from("  - Tasks: type to filter, Enter opens, Ctrl+Enter spawns"),
+        Line::from("  - Tasks: n creates, Del deletes, Shift+Tab switches engine"),
+        Line::from("  - New Task: Ctrl+S saves, Ctrl+I inserts image, Ctrl+P edits project path"),
+        Line::from("  - Task Detail: Ctrl+Enter spawns, Shift+Tab switches engine, Del deletes"),
         Line::from("  - Projects/Sessions: ● indicates online"),
         Line::from("  - Session Detail: Tab switches focus (Timeline / Details)"),
         Line::from("  - Session Detail: o shows Result (last Out)"),
@@ -3546,6 +4132,89 @@ fn render_delete_session_confirm_overlay(
     )]));
     message.push(Line::from(format!("Sessions dir: {sessions_dir}")));
     message.push(Line::from("Your project folder is not modified."));
+
+    let paragraph = Paragraph::new(message).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, chunks[0]);
+
+    let cancel_style = if confirm.selection == DeleteConfirmSelection::Cancel {
+        Style::default()
+            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let delete_base = Style::default().fg(Color::Red);
+    let delete_style = if confirm.selection == DeleteConfirmSelection::Delete {
+        delete_base
+            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        delete_base.add_modifier(Modifier::BOLD)
+    };
+
+    let buttons = Paragraph::new(Line::from(vec![
+        Span::styled("[ Cancel ]", cancel_style),
+        Span::raw("   "),
+        Span::styled("[ Delete ]", delete_style),
+    ]))
+    .alignment(Alignment::Center);
+    frame.render_widget(buttons, chunks[1]);
+
+    let hint = Paragraph::new("Keys: ←/→ choose  Enter confirm  Esc/Backspace cancel  y/n")
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    frame.render_widget(hint, chunks[2]);
+}
+
+fn render_delete_task_confirm_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    _model: &AppModel,
+    confirm: &crate::app::DeleteTaskConfirmDialog,
+) {
+    let popup = centered_rect(72, 36, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .title("Delete Task");
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let max_line_width = (chunks[0].width as usize).saturating_sub(1);
+    let project_path = confirm.project_path.display().to_string();
+    let project_path = truncate_middle(&project_path, max_line_width);
+    let title_budget = max_line_width.saturating_sub(7);
+    let task_title = truncate_end(&confirm.task_title, title_budget);
+
+    let mut message = Vec::new();
+    message.push(Line::from(vec![
+        Span::raw("Delete "),
+        Span::styled(
+            format!("\"{task_title}\""),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("?"),
+    ]));
+    message.push(Line::from(""));
+    message.push(Line::from(format!("Project path: {project_path}")));
+    message.push(Line::from(""));
+    message.push(Line::from(vec![Span::styled(
+        "This removes the task from the local tasks database.",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )]));
 
     let paragraph = Paragraph::new(message).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, chunks[0]);

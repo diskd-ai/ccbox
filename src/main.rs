@@ -7,12 +7,16 @@ mod ui;
 use crate::app::ProcessOutputKind;
 use crate::app::{AppCommand, AppEvent, AppModel};
 use crate::cli::CliInvocation;
-use crate::domain::{compute_session_stats, make_session_summary, parse_session_meta_line};
+use crate::domain::{
+    compute_session_stats, derive_task_title, format_task_spawn_prompt, make_session_summary,
+    parse_session_meta_line,
+};
 use crate::infra::{
-    KillProcessError, ProcessExit, ProcessManager, ProcessSignal, SessionIndex, WatchSignal,
-    delete_session_logs, load_last_assistant_output, load_session_index, load_session_timeline,
-    read_from_offset, read_tail, refresh_session_index, resolve_ccbox_state_dir,
-    resolve_sessions_dir, save_session_index, scan_sessions_dir, watch_sessions_dir,
+    KillProcessError, ProcessExit, ProcessManager, ProcessSignal, SessionIndex, TaskStore,
+    WatchSignal, delete_session_logs, load_last_assistant_output, load_session_index,
+    load_session_timeline, read_from_offset, read_tail, refresh_session_index,
+    resolve_ccbox_state_dir, resolve_sessions_dir, save_session_index, scan_sessions_dir,
+    watch_sessions_dir,
 };
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyboardEnhancementFlags,
@@ -316,6 +320,317 @@ fn run(
                             *model = model.with_data(new_data);
                             refresh_open_project_stats_overlay(model);
                             request_session_index_refresh_optional(&session_index_req_tx, model);
+                        }
+                        AppCommand::OpenTasks { return_to } => {
+                            let store = match TaskStore::open_default() {
+                                Ok(store) => store,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to open tasks DB: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            let tasks = match store.list_tasks() {
+                                Ok(tasks) => tasks,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to load tasks: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            let summaries = tasks
+                                .into_iter()
+                                .map(|entry| crate::app::TaskSummaryRow {
+                                    id: entry.task.id,
+                                    title: derive_task_title(&entry.task.body),
+                                    project_path: entry.task.project_path,
+                                    updated_at: entry.task.updated_at,
+                                    image_count: entry.image_count,
+                                })
+                                .collect::<Vec<_>>();
+
+                            model.view = crate::app::View::Tasks(crate::app::TasksView::new(
+                                return_to, summaries,
+                            ));
+                            model.help_open = false;
+                            model.system_menu = None;
+                        }
+                        AppCommand::OpenTaskCreate {
+                            return_to,
+                            project_path,
+                        } => {
+                            let store = match TaskStore::open_default() {
+                                Ok(store) => store,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to open tasks DB: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            let tasks = match store.list_tasks() {
+                                Ok(tasks) => tasks,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to load tasks: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            let summaries = tasks
+                                .into_iter()
+                                .map(|entry| crate::app::TaskSummaryRow {
+                                    id: entry.task.id,
+                                    title: derive_task_title(&entry.task.body),
+                                    project_path: entry.task.project_path,
+                                    updated_at: entry.task.updated_at,
+                                    image_count: entry.image_count,
+                                })
+                                .collect::<Vec<_>>();
+
+                            let tasks_view = crate::app::TasksView::new(return_to, summaries);
+                            let project_path = project_path
+                                .or_else(|| std::env::current_dir().ok())
+                                .unwrap_or_default();
+                            model.view = crate::app::View::TaskCreate(
+                                crate::app::TaskCreateView::new(tasks_view, project_path),
+                            );
+                            model.help_open = false;
+                            model.system_menu = None;
+                        }
+                        AppCommand::OpenTaskDetail {
+                            from_tasks,
+                            task_id,
+                        } => {
+                            let store = match TaskStore::open_default() {
+                                Ok(store) => store,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to open tasks DB: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            match store.load_task(&task_id) {
+                                Ok(Some((task, images))) => {
+                                    let engine = from_tasks.engine;
+                                    model.view =
+                                        crate::app::View::TaskDetail(crate::app::TaskDetailView {
+                                            from_tasks,
+                                            task,
+                                            images,
+                                            engine,
+                                            scroll: 0,
+                                        });
+                                    model.help_open = false;
+                                    model.system_menu = None;
+                                }
+                                Ok(None) => {
+                                    *model = model.with_notice(Some("Task not found.".to_string()));
+                                }
+                                Err(error) => {
+                                    *model = model
+                                        .with_notice(Some(format!("Failed to load task: {error}")));
+                                }
+                            }
+                        }
+                        AppCommand::CreateTask {
+                            from_tasks,
+                            project_path,
+                            body,
+                            image_paths,
+                        } => {
+                            let store = match TaskStore::open_default() {
+                                Ok(store) => store,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to open tasks DB: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            if let Err(error) =
+                                store.create_task(&project_path, &body, &image_paths)
+                            {
+                                *model = model
+                                    .with_notice(Some(format!("Failed to save task: {error}")));
+                                continue;
+                            }
+
+                            let tasks = match store.list_tasks() {
+                                Ok(tasks) => tasks,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to load tasks: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+                            let summaries = tasks
+                                .into_iter()
+                                .map(|entry| crate::app::TaskSummaryRow {
+                                    id: entry.task.id,
+                                    title: derive_task_title(&entry.task.body),
+                                    project_path: entry.task.project_path,
+                                    updated_at: entry.task.updated_at,
+                                    image_count: entry.image_count,
+                                })
+                                .collect::<Vec<_>>();
+
+                            model.view =
+                                crate::app::View::Tasks(from_tasks.with_reloaded_tasks(summaries));
+                            *model = model.with_notice(Some("Saved task.".to_string()));
+                        }
+                        AppCommand::DeleteTask {
+                            from_tasks,
+                            task_id,
+                        } => {
+                            let store = match TaskStore::open_default() {
+                                Ok(store) => store,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to open tasks DB: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            match store.delete_task(&task_id) {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    *model = model.with_notice(Some("Task not found.".to_string()));
+                                    continue;
+                                }
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to delete task: {error}"
+                                    )));
+                                    continue;
+                                }
+                            }
+
+                            let tasks = match store.list_tasks() {
+                                Ok(tasks) => tasks,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to load tasks: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+                            let summaries = tasks
+                                .into_iter()
+                                .map(|entry| crate::app::TaskSummaryRow {
+                                    id: entry.task.id,
+                                    title: derive_task_title(&entry.task.body),
+                                    project_path: entry.task.project_path,
+                                    updated_at: entry.task.updated_at,
+                                    image_count: entry.image_count,
+                                })
+                                .collect::<Vec<_>>();
+
+                            model.view =
+                                crate::app::View::Tasks(from_tasks.with_reloaded_tasks(summaries));
+                            *model = model.with_notice(Some("Deleted task.".to_string()));
+                        }
+                        AppCommand::SpawnTask { engine, task_id } => {
+                            let Some(manager) = process_manager.as_mut() else {
+                                *model = model
+                                    .with_notice(Some("Process spawning is disabled.".to_string()));
+                                continue;
+                            };
+
+                            let store = match TaskStore::open_default() {
+                                Ok(store) => store,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to open tasks DB: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            let Some((task, images)) = (match store.load_task(&task_id) {
+                                Ok(task) => task,
+                                Err(error) => {
+                                    *model = model
+                                        .with_notice(Some(format!("Failed to load task: {error}")));
+                                    continue;
+                                }
+                            }) else {
+                                *model = model.with_notice(Some("Task not found.".to_string()));
+                                continue;
+                            };
+
+                            let prompt = format_task_spawn_prompt(&task, &images);
+
+                            match manager.spawn_agent_process(engine, &task.project_path, &prompt) {
+                                Ok(spawned) => {
+                                    model.processes.push(crate::app::ProcessInfo {
+                                        id: spawned.id.clone(),
+                                        pid: spawned.pid,
+                                        engine: spawned.engine,
+                                        project_path: spawned.project_path.clone(),
+                                        prompt_preview: spawned.prompt_preview.clone(),
+                                        started_at: spawned.started_at,
+                                        status: crate::app::ProcessStatus::Running,
+                                        session_id: None,
+                                        session_log_path: None,
+                                        stdout_path: spawned.stdout_path.clone(),
+                                        stderr_path: spawned.stderr_path.clone(),
+                                        log_path: spawned.log_path.clone(),
+                                    });
+                                    *model = model.with_notice(Some(format!(
+                                        "Spawned {} ({})",
+                                        spawned.engine.label(),
+                                        spawned.id
+                                    )));
+                                }
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to spawn process: {error}"
+                                    )));
+                                }
+                            }
+                        }
+                        AppCommand::TaskCreateInsertImage { path } => {
+                            let Ok(metadata) = std::fs::metadata(&path) else {
+                                *model = model.with_notice(Some(format!(
+                                    "Image not found: {}",
+                                    path.display()
+                                )));
+                                continue;
+                            };
+                            if !metadata.is_file() {
+                                *model = model
+                                    .with_notice(Some(format!("Not a file: {}", path.display())));
+                                continue;
+                            }
+                            if !is_supported_image_path(&path) {
+                                *model = model
+                                    .with_notice(Some("Unsupported image type (v1).".to_string()));
+                                continue;
+                            }
+
+                            let path = std::fs::canonicalize(&path).unwrap_or(path);
+
+                            if let crate::app::View::TaskCreate(task_create) = &mut model.view {
+                                let ordinal =
+                                    u32::try_from(task_create.image_paths.len().saturating_add(1))
+                                        .unwrap_or(u32::MAX);
+                                task_create.image_paths.push(path);
+                                task_create.editor.insert_str(&format!("[Image {ordinal}]"));
+                                task_create.overlay = None;
+                                model.notice = Some(format!("Inserted [Image {ordinal}]."));
+                            }
                         }
                         AppCommand::OpenSessionDetail {
                             from_sessions,
@@ -827,4 +1142,15 @@ fn build_session_summary_from_log_path(
         file_size_bytes,
         file_modified,
     ))
+}
+
+fn is_supported_image_path(path: &std::path::Path) -> bool {
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    let ext = ext.to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff"
+    )
 }

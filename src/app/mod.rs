@@ -1,8 +1,9 @@
+mod line_editor;
 mod text_editor;
 
 use crate::domain::{
-    AgentEngine, ProjectIndex, ProjectSummary, SessionStats, SessionSummary, TimelineItem,
-    TimelineItemKind, TurnContextSummary, index_projects,
+    AgentEngine, ProjectIndex, ProjectSummary, SessionStats, SessionSummary, Task, TaskId,
+    TaskImage, TimelineItem, TimelineItemKind, TurnContextSummary, index_projects,
 };
 use crate::infra::{ScanWarningCount, SessionIndex};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use thiserror::Error;
 
+pub use line_editor::LineEditor;
 pub use text_editor::TextEditor;
 
 #[derive(Debug, Error)]
@@ -67,6 +69,7 @@ pub struct AppModel {
     pub system_menu: Option<SystemMenuOverlay>,
     pub delete_confirm: Option<DeleteConfirmDialog>,
     pub delete_session_confirm: Option<DeleteSessionConfirmDialog>,
+    pub delete_task_confirm: Option<DeleteTaskConfirmDialog>,
     pub session_result_preview: Option<SessionResultPreviewOverlay>,
     pub session_stats_overlay: Option<SessionStatsOverlay>,
     pub project_stats_overlay: Option<ProjectStatsOverlay>,
@@ -91,6 +94,7 @@ impl AppModel {
             system_menu: None,
             delete_confirm: None,
             delete_session_confirm: None,
+            delete_task_confirm: None,
             session_result_preview: None,
             session_stats_overlay: None,
             project_stats_overlay: None,
@@ -111,6 +115,7 @@ impl AppModel {
                 system_menu: self.system_menu.clone(),
                 delete_confirm: self.delete_confirm.clone(),
                 delete_session_confirm: self.delete_session_confirm.clone(),
+                delete_task_confirm: self.delete_task_confirm.clone(),
                 session_result_preview: self.session_result_preview.clone(),
                 session_stats_overlay: self.session_stats_overlay.clone(),
                 project_stats_overlay: self.project_stats_overlay.clone(),
@@ -264,6 +269,9 @@ impl AppModel {
                         None => View::Projects(ProjectsView::new(&data.projects)),
                     }
                 }
+                View::Tasks(tasks_view) => View::Tasks(tasks_view.clone()),
+                View::TaskCreate(task_create_view) => View::TaskCreate(task_create_view.clone()),
+                View::TaskDetail(task_detail_view) => View::TaskDetail(task_detail_view.clone()),
                 View::Processes(processes_view) => View::Processes(processes_view.clone()),
                 View::ProcessOutput(output_view) => View::ProcessOutput(output_view.clone()),
                 View::Error => View::Projects(ProjectsView::new(&data.projects)),
@@ -280,6 +288,7 @@ impl AppModel {
             system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
+            delete_task_confirm: self.delete_task_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
             project_stats_overlay: self.project_stats_overlay.clone(),
@@ -299,6 +308,7 @@ impl AppModel {
             system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
+            delete_task_confirm: self.delete_task_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
             project_stats_overlay: self.project_stats_overlay.clone(),
@@ -318,6 +328,7 @@ impl AppModel {
             system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
+            delete_task_confirm: self.delete_task_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
             project_stats_overlay: self.project_stats_overlay.clone(),
@@ -350,6 +361,7 @@ impl AppModel {
             system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
+            delete_task_confirm: self.delete_task_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
             project_stats_overlay: self.project_stats_overlay.clone(),
@@ -437,6 +449,9 @@ pub enum MainMenu {
     Sessions,
     NewSession,
     Session,
+    Tasks,
+    TaskCreate,
+    TaskDetail,
     Processes,
     ProcessOutput,
     Error,
@@ -451,6 +466,9 @@ impl MainMenu {
             Self::Sessions => "Sessions",
             Self::NewSession => "New Session",
             Self::Session => "Session",
+            Self::Tasks => "Tasks",
+            Self::TaskCreate => "New Task",
+            Self::TaskDetail => "Task",
             Self::Processes => "Processes",
             Self::ProcessOutput => "Output",
             Self::Error => "Error",
@@ -471,7 +489,7 @@ pub struct MainMenuEntry {
     pub key: MainMenuKey,
 }
 
-pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 7] = [
+pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 8] = [
     MainMenuEntry {
         label: "Help",
         hotkey: "F1 or ?",
@@ -497,10 +515,18 @@ pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 7] = [
         },
     },
     MainMenuEntry {
-        label: "New Task",
-        hotkey: "Ctrl+N or Cmd+N",
+        label: "Tasks",
+        hotkey: "Ctrl+4 or Cmd+4",
         key: MainMenuKey {
-            code: KeyCode::Char('n'),
+            code: KeyCode::Char('4'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "New Task",
+        hotkey: "Ctrl+T or Cmd+T",
+        key: MainMenuKey {
+            code: KeyCode::Char('t'),
             modifiers: KeyModifiers::CONTROL,
         },
     },
@@ -530,7 +556,7 @@ pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 7] = [
     },
 ];
 
-pub const MAIN_MENU_WINDOW_ITEMS: [MainMenuEntry; 10] = [
+pub const MAIN_MENU_WINDOW_ITEMS: [MainMenuEntry; 13] = [
     MainMenuEntry {
         label: "Projects",
         hotkey: "Ctrl+1 or Cmd+1",
@@ -548,6 +574,14 @@ pub const MAIN_MENU_WINDOW_ITEMS: [MainMenuEntry; 10] = [
         },
     },
     MainMenuEntry {
+        label: "Tasks",
+        hotkey: "Ctrl+4 or Cmd+4",
+        key: MainMenuKey {
+            code: KeyCode::Char('4'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
         label: "Session Detail",
         hotkey: "Enter",
         key: MainMenuKey {
@@ -556,10 +590,26 @@ pub const MAIN_MENU_WINDOW_ITEMS: [MainMenuEntry; 10] = [
         },
     },
     MainMenuEntry {
+        label: "Task Detail",
+        hotkey: "Ctrl+D or Cmd+D",
+        key: MainMenuKey {
+            code: KeyCode::Char('d'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
         label: "New Session",
         hotkey: "Ctrl+N or Cmd+N",
         key: MainMenuKey {
             code: KeyCode::Char('n'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "New Task",
+        hotkey: "Ctrl+T or Cmd+T",
+        key: MainMenuKey {
+            code: KeyCode::Char('t'),
             modifiers: KeyModifiers::CONTROL,
         },
     },
@@ -777,6 +827,127 @@ pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 6] = [
     },
 ];
 
+pub const MAIN_MENU_TASKS_ITEMS: [MainMenuEntry; 6] = [
+    MainMenuEntry {
+        label: "Open",
+        hotkey: "Enter",
+        key: MainMenuKey {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Spawn",
+        hotkey: "Ctrl+Enter or Cmd+Enter",
+        key: MainMenuKey {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "New Task",
+        hotkey: "n",
+        key: MainMenuKey {
+            code: KeyCode::Char('n'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Switch engine",
+        hotkey: "Shift+Tab",
+        key: MainMenuKey {
+            code: KeyCode::BackTab,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Delete task",
+        hotkey: "Del",
+        key: MainMenuKey {
+            code: KeyCode::Delete,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Back / Clear filter",
+        hotkey: "Esc or Backspace",
+        key: MainMenuKey {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+];
+
+pub const MAIN_MENU_TASK_CREATE_ITEMS: [MainMenuEntry; 4] = [
+    MainMenuEntry {
+        label: "Save",
+        hotkey: "Ctrl+S or Cmd+S",
+        key: MainMenuKey {
+            code: KeyCode::Char('s'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Insert image",
+        hotkey: "Ctrl+I or Cmd+I",
+        key: MainMenuKey {
+            code: KeyCode::Char('i'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Edit project path",
+        hotkey: "Ctrl+P or Cmd+P",
+        key: MainMenuKey {
+            code: KeyCode::Char('p'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Cancel",
+        hotkey: "Esc",
+        key: MainMenuKey {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+];
+
+pub const MAIN_MENU_TASK_DETAIL_ITEMS: [MainMenuEntry; 4] = [
+    MainMenuEntry {
+        label: "Spawn",
+        hotkey: "Ctrl+Enter or Cmd+Enter",
+        key: MainMenuKey {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Switch engine",
+        hotkey: "Shift+Tab",
+        key: MainMenuKey {
+            code: KeyCode::BackTab,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Delete task",
+        hotkey: "Del",
+        key: MainMenuKey {
+            code: KeyCode::Delete,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Back",
+        hotkey: "Esc or Backspace",
+        key: MainMenuKey {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+];
+
 pub const MAIN_MENU_PROCESSES_ITEMS: [MainMenuEntry; 6] = [
     MainMenuEntry {
         label: "Open stdout",
@@ -898,6 +1069,11 @@ pub const MAIN_MENUS_NEW_SESSION: [MainMenu; 3] =
     [MainMenu::System, MainMenu::Window, MainMenu::NewSession];
 pub const MAIN_MENUS_SESSION_DETAIL: [MainMenu; 3] =
     [MainMenu::System, MainMenu::Window, MainMenu::Session];
+pub const MAIN_MENUS_TASKS: [MainMenu; 3] = [MainMenu::System, MainMenu::Window, MainMenu::Tasks];
+pub const MAIN_MENUS_TASK_CREATE: [MainMenu; 3] =
+    [MainMenu::System, MainMenu::Window, MainMenu::TaskCreate];
+pub const MAIN_MENUS_TASK_DETAIL: [MainMenu; 3] =
+    [MainMenu::System, MainMenu::Window, MainMenu::TaskDetail];
 pub const MAIN_MENUS_PROCESSES: [MainMenu; 3] =
     [MainMenu::System, MainMenu::Window, MainMenu::Processes];
 pub const MAIN_MENUS_PROCESS_OUTPUT: [MainMenu; 3] =
@@ -910,6 +1086,9 @@ pub fn main_menus_for_view(view: &View) -> &'static [MainMenu] {
         View::Sessions(_) => &MAIN_MENUS_SESSIONS,
         View::NewSession(_) => &MAIN_MENUS_NEW_SESSION,
         View::SessionDetail(_) => &MAIN_MENUS_SESSION_DETAIL,
+        View::Tasks(_) => &MAIN_MENUS_TASKS,
+        View::TaskCreate(_) => &MAIN_MENUS_TASK_CREATE,
+        View::TaskDetail(_) => &MAIN_MENUS_TASK_DETAIL,
         View::Processes(_) => &MAIN_MENUS_PROCESSES,
         View::ProcessOutput(_) => &MAIN_MENUS_PROCESS_OUTPUT,
         View::Error => &MAIN_MENUS_ERROR,
@@ -924,6 +1103,9 @@ pub fn main_menu_items(menu: MainMenu) -> &'static [MainMenuEntry] {
         MainMenu::Sessions => &MAIN_MENU_SESSIONS_ITEMS,
         MainMenu::NewSession => &MAIN_MENU_NEW_SESSION_ITEMS,
         MainMenu::Session => &MAIN_MENU_SESSION_ITEMS,
+        MainMenu::Tasks => &MAIN_MENU_TASKS_ITEMS,
+        MainMenu::TaskCreate => &MAIN_MENU_TASK_CREATE_ITEMS,
+        MainMenu::TaskDetail => &MAIN_MENU_TASK_DETAIL_ITEMS,
         MainMenu::Processes => &MAIN_MENU_PROCESSES_ITEMS,
         MainMenu::ProcessOutput => &MAIN_MENU_PROCESS_OUTPUT_ITEMS,
         MainMenu::Error => &MAIN_MENU_ERROR_ITEMS,
@@ -971,6 +1153,15 @@ pub struct DeleteSessionConfirmDialog {
     pub selection: DeleteConfirmSelection,
 }
 
+#[derive(Clone, Debug)]
+pub struct DeleteTaskConfirmDialog {
+    pub task_id: TaskId,
+    pub task_title: String,
+    pub project_path: PathBuf,
+    pub selection: DeleteConfirmSelection,
+    pub return_to_tasks: TasksView,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProcessStatus {
     Running,
@@ -1015,6 +1206,9 @@ pub enum View {
     Sessions(SessionsView),
     NewSession(NewSessionView),
     SessionDetail(SessionDetailView),
+    Tasks(TasksView),
+    TaskCreate(TaskCreateView),
+    TaskDetail(TaskDetailView),
     Processes(ProcessesView),
     ProcessOutput(ProcessOutputView),
     Error,
@@ -1116,6 +1310,93 @@ pub struct SessionDetailView {
 }
 
 #[derive(Clone, Debug)]
+pub struct TaskSummaryRow {
+    pub id: TaskId,
+    pub title: String,
+    pub project_path: PathBuf,
+    pub updated_at: SystemTime,
+    pub image_count: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct TasksView {
+    pub return_to: Box<View>,
+    pub tasks: Vec<TaskSummaryRow>,
+    pub query: String,
+    pub filtered_indices: Vec<usize>,
+    pub selected: usize,
+    pub engine: AgentEngine,
+}
+
+impl TasksView {
+    pub fn new(return_to: Box<View>, tasks: Vec<TaskSummaryRow>) -> Self {
+        let filtered_indices = (0..tasks.len()).collect();
+        Self {
+            return_to,
+            tasks,
+            query: String::new(),
+            filtered_indices,
+            selected: 0,
+            engine: AgentEngine::Codex,
+        }
+    }
+
+    pub fn with_reloaded_tasks(mut self, tasks: Vec<TaskSummaryRow>) -> Self {
+        let selected_id = selected_task_id(&self);
+        self.tasks = tasks;
+        apply_task_filter(&mut self);
+
+        if let Some(task_id) = selected_id {
+            if let Some(pos) = self.filtered_indices.iter().position(|index| {
+                self.tasks
+                    .get(*index)
+                    .is_some_and(|task| task.id == task_id)
+            }) {
+                self.selected = pos;
+            }
+        }
+
+        self
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum TaskCreateOverlay {
+    ImagePath(LineEditor),
+    ProjectPath(LineEditor),
+}
+
+#[derive(Clone, Debug)]
+pub struct TaskCreateView {
+    pub from_tasks: TasksView,
+    pub editor: TextEditor,
+    pub project_path: PathBuf,
+    pub image_paths: Vec<PathBuf>,
+    pub overlay: Option<TaskCreateOverlay>,
+}
+
+impl TaskCreateView {
+    pub fn new(from_tasks: TasksView, project_path: PathBuf) -> Self {
+        Self {
+            from_tasks,
+            editor: TextEditor::new(),
+            project_path,
+            image_paths: Vec::new(),
+            overlay: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TaskDetailView {
+    pub from_tasks: TasksView,
+    pub task: Task,
+    pub images: Vec<TaskImage>,
+    pub engine: AgentEngine,
+    pub scroll: u16,
+}
+
+#[derive(Clone, Debug)]
 pub struct ProcessesView {
     pub return_to: Box<View>,
     pub selected: usize,
@@ -1160,6 +1441,34 @@ pub enum AppCommand {
     None,
     Quit,
     Rescan,
+    OpenTasks {
+        return_to: Box<View>,
+    },
+    OpenTaskCreate {
+        return_to: Box<View>,
+        project_path: Option<PathBuf>,
+    },
+    OpenTaskDetail {
+        from_tasks: TasksView,
+        task_id: TaskId,
+    },
+    CreateTask {
+        from_tasks: TasksView,
+        project_path: PathBuf,
+        body: String,
+        image_paths: Vec<PathBuf>,
+    },
+    DeleteTask {
+        from_tasks: TasksView,
+        task_id: TaskId,
+    },
+    SpawnTask {
+        engine: AgentEngine,
+        task_id: TaskId,
+    },
+    TaskCreateInsertImage {
+        path: PathBuf,
+    },
     OpenSessionDetail {
         from_sessions: SessionsView,
         session: SessionSummary,
@@ -1224,6 +1533,7 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_task_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1242,6 +1552,7 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_task_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1265,6 +1576,7 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_task_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1280,11 +1592,80 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         return (model, AppCommand::None);
     }
 
+    if command_modifier && matches!(key.code, KeyCode::Char('4')) {
+        if model.help_open
+            || model.system_menu.is_some()
+            || model.delete_confirm.is_some()
+            || model.delete_session_confirm.is_some()
+            || model.delete_task_confirm.is_some()
+            || model.session_result_preview.is_some()
+            || model.session_stats_overlay.is_some()
+            || model.project_stats_overlay.is_some()
+        {
+            return (model, AppCommand::None);
+        }
+
+        match model.view.clone() {
+            View::Tasks(_) => {}
+            View::TaskCreate(task_create) => {
+                model.view = View::Tasks(task_create.from_tasks);
+            }
+            View::TaskDetail(task_detail) => {
+                model.view = View::Tasks(task_detail.from_tasks);
+            }
+            _ => {
+                let return_to = Box::new(model.view.clone());
+                model.help_open = false;
+                model.system_menu = None;
+                return (model, AppCommand::OpenTasks { return_to });
+            }
+        }
+
+        model.help_open = false;
+        model.system_menu = None;
+        return (model, AppCommand::None);
+    }
+
+    if command_modifier && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
+        if model.help_open
+            || model.system_menu.is_some()
+            || model.delete_confirm.is_some()
+            || model.delete_session_confirm.is_some()
+            || model.delete_task_confirm.is_some()
+            || model.session_result_preview.is_some()
+            || model.session_stats_overlay.is_some()
+            || model.project_stats_overlay.is_some()
+        {
+            return (model, AppCommand::None);
+        }
+
+        if matches!(&model.view, View::TaskDetail(_)) {
+            return (model, AppCommand::None);
+        }
+
+        let Some((from_tasks, task_id)) = infer_task_detail_target(&model) else {
+            model.notice = Some("No task selected.".to_string());
+            return (model, AppCommand::None);
+        };
+
+        model.view = View::Tasks(from_tasks.clone());
+        model.help_open = false;
+        model.system_menu = None;
+        return (
+            model,
+            AppCommand::OpenTaskDetail {
+                from_tasks,
+                task_id,
+            },
+        );
+    }
+
     if command_modifier && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
         if model.help_open
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_task_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1317,10 +1698,83 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
             View::SessionDetail(detail_view) => {
                 model.view = View::NewSession(NewSessionView::new(detail_view.from_sessions));
             }
+            View::Tasks(tasks_view) => {
+                let Some(sessions_view) =
+                    infer_sessions_view_for_window_menu_view(tasks_view.return_to.as_ref(), &model)
+                else {
+                    model.notice = Some("No project selected.".to_string());
+                    return (model, AppCommand::None);
+                };
+                model.view = View::NewSession(NewSessionView::new(sessions_view));
+            }
+            View::TaskCreate(task_create) => {
+                let Some(sessions_view) = infer_sessions_view_for_window_menu_view(
+                    task_create.from_tasks.return_to.as_ref(),
+                    &model,
+                ) else {
+                    model.notice = Some("No project selected.".to_string());
+                    return (model, AppCommand::None);
+                };
+                model.view = View::NewSession(NewSessionView::new(sessions_view));
+            }
+            View::TaskDetail(task_detail) => {
+                let Some(sessions_view) = infer_sessions_view_for_window_menu_view(
+                    task_detail.from_tasks.return_to.as_ref(),
+                    &model,
+                ) else {
+                    model.notice = Some("No project selected.".to_string());
+                    return (model, AppCommand::None);
+                };
+                model.view = View::NewSession(NewSessionView::new(sessions_view));
+            }
             View::NewSession(_) => {}
             View::Processes(_) | View::ProcessOutput(_) | View::Error => {
-                model.notice = Some("Open a project to create a task.".to_string());
+                model.notice = Some("Open a project to start a new session.".to_string());
                 return (model, AppCommand::None);
+            }
+        }
+
+        model.help_open = false;
+        model.system_menu = None;
+        return (model, AppCommand::None);
+    }
+
+    if command_modifier && matches!(key.code, KeyCode::Char('t') | KeyCode::Char('T')) {
+        if model.help_open
+            || model.system_menu.is_some()
+            || model.delete_confirm.is_some()
+            || model.delete_session_confirm.is_some()
+            || model.delete_task_confirm.is_some()
+            || model.session_result_preview.is_some()
+            || model.session_stats_overlay.is_some()
+            || model.project_stats_overlay.is_some()
+        {
+            return (model, AppCommand::None);
+        }
+
+        match model.view.clone() {
+            View::Tasks(tasks_view) => {
+                let project_path = default_task_create_project_path(&model, &tasks_view);
+                model.view = View::TaskCreate(TaskCreateView::new(tasks_view, project_path));
+            }
+            View::TaskDetail(detail_view) => {
+                let project_path = detail_view.task.project_path.clone();
+                model.view =
+                    View::TaskCreate(TaskCreateView::new(detail_view.from_tasks, project_path));
+            }
+            View::TaskCreate(_) => {}
+            _ => {
+                let project_path = infer_project_path_for_new_task(&model);
+                let return_to = Box::new(model.view.clone());
+                model.help_open = false;
+                model.system_menu = None;
+                return (
+                    model,
+                    AppCommand::OpenTaskCreate {
+                        return_to,
+                        project_path,
+                    },
+                );
             }
         }
 
@@ -1332,6 +1786,7 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
     if matches!(key.code, KeyCode::F(2)) {
         if model.delete_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_task_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1371,6 +1826,10 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         return update_delete_session_confirm(model, confirm, key);
     }
 
+    if let Some(confirm) = model.delete_task_confirm.take() {
+        return update_delete_task_confirm(model, confirm, key);
+    }
+
     if let Some(confirm) = model.delete_confirm.take() {
         return update_delete_confirm(model, confirm, key);
     }
@@ -1403,6 +1862,9 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         View::Sessions(sessions_view) => update_sessions(model, sessions_view, key),
         View::NewSession(new_session_view) => update_new_session(model, new_session_view, key),
         View::SessionDetail(detail_view) => update_session_detail(model, detail_view, key),
+        View::Tasks(tasks_view) => update_tasks(model, tasks_view, key),
+        View::TaskCreate(task_create_view) => update_task_create(model, task_create_view, key),
+        View::TaskDetail(task_detail_view) => update_task_detail(model, task_detail_view, key),
         View::Processes(processes_view) => update_processes(model, processes_view, key),
         View::ProcessOutput(output_view) => update_process_output(model, output_view, key),
         View::Error => update_error(model, key),
@@ -1429,6 +1891,17 @@ fn infer_sessions_view_for_window_menu_view(view: &View, model: &AppModel) -> Op
         View::Sessions(sessions_view) => Some(sessions_view.clone()),
         View::NewSession(new_session_view) => Some(new_session_view.from_sessions.clone()),
         View::SessionDetail(detail_view) => Some(detail_view.from_sessions.clone()),
+        View::Tasks(tasks_view) => {
+            infer_sessions_view_for_window_menu_view(tasks_view.return_to.as_ref(), model)
+        }
+        View::TaskCreate(task_create) => infer_sessions_view_for_window_menu_view(
+            task_create.from_tasks.return_to.as_ref(),
+            model,
+        ),
+        View::TaskDetail(task_detail) => infer_sessions_view_for_window_menu_view(
+            task_detail.from_tasks.return_to.as_ref(),
+            model,
+        ),
         View::Processes(processes_view) => {
             infer_sessions_view_for_window_menu_view(processes_view.return_to.as_ref(), model)
         }
@@ -1482,6 +1955,15 @@ fn infer_session_detail_target_view(
             detail_view.from_sessions.clone(),
             detail_view.session.clone(),
         )),
+        View::Tasks(tasks_view) => {
+            infer_session_detail_target_view(tasks_view.return_to.as_ref(), model)
+        }
+        View::TaskCreate(task_create) => {
+            infer_session_detail_target_view(task_create.from_tasks.return_to.as_ref(), model)
+        }
+        View::TaskDetail(task_detail) => {
+            infer_session_detail_target_view(task_detail.from_tasks.return_to.as_ref(), model)
+        }
         View::Processes(processes_view) => {
             infer_session_detail_target_view(processes_view.return_to.as_ref(), model)
         }
@@ -1489,6 +1971,36 @@ fn infer_session_detail_target_view(
             infer_session_detail_target_view(output_view.return_to.as_ref(), model)
         }
         View::Error => None,
+    }
+}
+
+fn infer_task_detail_target(model: &AppModel) -> Option<(TasksView, TaskId)> {
+    infer_task_detail_target_view(&model.view)
+}
+
+fn infer_task_detail_target_view(view: &View) -> Option<(TasksView, TaskId)> {
+    match view {
+        View::Tasks(tasks_view) => {
+            selected_task_id(tasks_view).map(|task_id| (tasks_view.clone(), task_id))
+        }
+        View::TaskCreate(task_create) => {
+            let tasks_view = task_create.from_tasks.clone();
+            selected_task_id(&tasks_view).map(|task_id| (tasks_view, task_id))
+        }
+        View::TaskDetail(task_detail) => {
+            Some((task_detail.from_tasks.clone(), task_detail.task.id.clone()))
+        }
+        View::Processes(processes_view) => {
+            infer_task_detail_target_view(processes_view.return_to.as_ref())
+        }
+        View::ProcessOutput(output_view) => {
+            infer_task_detail_target_view(output_view.return_to.as_ref())
+        }
+        View::Projects(_)
+        | View::Sessions(_)
+        | View::NewSession(_)
+        | View::SessionDetail(_)
+        | View::Error => None,
     }
 }
 
@@ -1584,6 +2096,30 @@ fn apply_window_menu_entry(model: AppModel, entry: MainMenuEntry) -> (AppModel, 
                 },
             )
         }
+        "Task Detail" => {
+            let mut model = model;
+
+            if matches!(&model.view, View::TaskDetail(_)) {
+                return (model, AppCommand::None);
+            }
+
+            let Some((from_tasks, task_id)) = infer_task_detail_target(&model) else {
+                model.notice = Some("No task selected.".to_string());
+                return (model, AppCommand::None);
+            };
+
+            model.view = View::Tasks(from_tasks.clone());
+            model.help_open = false;
+            model.system_menu = None;
+
+            (
+                model,
+                AppCommand::OpenTaskDetail {
+                    from_tasks,
+                    task_id,
+                },
+            )
+        }
         "Output: stdout" => apply_window_menu_open_output(model, ProcessOutputKind::Stdout),
         "Output: stderr" => apply_window_menu_open_output(model, ProcessOutputKind::Stderr),
         "Output: log" => apply_window_menu_open_output(model, ProcessOutputKind::Log),
@@ -1635,7 +2171,10 @@ fn update_on_paste(model: AppModel, text: String) -> (AppModel, AppCommand) {
     if model.help_open {
         return (model, AppCommand::None);
     }
-    if model.delete_confirm.is_some() || model.delete_session_confirm.is_some() {
+    if model.delete_confirm.is_some()
+        || model.delete_session_confirm.is_some()
+        || model.delete_task_confirm.is_some()
+    {
         return (model, AppCommand::None);
     }
     if model.session_result_preview.is_some() {
@@ -1652,6 +2191,21 @@ fn update_on_paste(model: AppModel, text: String) -> (AppModel, AppCommand) {
     if let View::NewSession(mut new_session_view) = view {
         new_session_view.editor.insert_str(&text);
         model.view = View::NewSession(new_session_view);
+    } else if let View::TaskCreate(mut task_create_view) = view {
+        match task_create_view.overlay.take() {
+            Some(TaskCreateOverlay::ImagePath(mut editor)) => {
+                editor.insert_str(&text);
+                task_create_view.overlay = Some(TaskCreateOverlay::ImagePath(editor));
+            }
+            Some(TaskCreateOverlay::ProjectPath(mut editor)) => {
+                editor.insert_str(&text);
+                task_create_view.overlay = Some(TaskCreateOverlay::ProjectPath(editor));
+            }
+            None => {
+                task_create_view.editor.insert_str(&text);
+            }
+        }
+        model.view = View::TaskCreate(task_create_view);
     }
 
     (model, AppCommand::None)
@@ -1838,6 +2392,52 @@ fn update_delete_session_confirm(
     (model, AppCommand::None)
 }
 
+fn update_delete_task_confirm(
+    mut model: AppModel,
+    mut confirm: DeleteTaskConfirmDialog,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Backspace => {
+            model.delete_task_confirm = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Left | KeyCode::Right => {
+            confirm.selection = confirm.selection.toggle();
+        }
+        KeyCode::Enter => {
+            let command = if confirm.selection == DeleteConfirmSelection::Delete {
+                AppCommand::DeleteTask {
+                    from_tasks: confirm.return_to_tasks.clone(),
+                    task_id: confirm.task_id.clone(),
+                }
+            } else {
+                AppCommand::None
+            };
+            model.delete_task_confirm = None;
+            return (model, command);
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            model.delete_task_confirm = None;
+            return (
+                model,
+                AppCommand::DeleteTask {
+                    from_tasks: confirm.return_to_tasks.clone(),
+                    task_id: confirm.task_id.clone(),
+                },
+            );
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => {
+            model.delete_task_confirm = None;
+            return (model, AppCommand::None);
+        }
+        _ => {}
+    }
+
+    model.delete_task_confirm = Some(confirm);
+    (model, AppCommand::None)
+}
+
 fn update_error(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
     match key.code {
         KeyCode::Esc | KeyCode::Backspace => (
@@ -1851,6 +2451,7 @@ fn update_error(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                 system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
+                delete_task_confirm: model.delete_task_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
                 project_stats_overlay: model.project_stats_overlay.clone(),
@@ -1902,6 +2503,7 @@ fn update_projects(
                 system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
+                delete_task_confirm: model.delete_task_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
                 project_stats_overlay: model.project_stats_overlay.clone(),
@@ -1984,6 +2586,7 @@ fn update_projects(
             system_menu: model.system_menu.clone(),
             delete_confirm: model.delete_confirm.clone(),
             delete_session_confirm: model.delete_session_confirm.clone(),
+            delete_task_confirm: model.delete_task_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
             session_stats_overlay: model.session_stats_overlay.clone(),
             project_stats_overlay: model.project_stats_overlay.clone(),
@@ -2083,6 +2686,120 @@ fn apply_session_filter(sessions: &[SessionSummary], view: &mut SessionsView) {
     }
 }
 
+fn apply_task_filter(view: &mut TasksView) {
+    let query = view.query.trim().to_lowercase();
+    if query.is_empty() {
+        view.filtered_indices = (0..view.tasks.len()).collect();
+    } else {
+        view.filtered_indices = view
+            .tasks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, task)| {
+                let haystack = format!(
+                    "{}\n{}",
+                    task.title.to_lowercase(),
+                    task.project_path.display().to_string().to_lowercase()
+                );
+                if haystack.contains(&query) {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .collect();
+    }
+
+    if view.filtered_indices.is_empty() {
+        view.selected = 0;
+    } else {
+        view.selected = view
+            .selected
+            .min(view.filtered_indices.len().saturating_sub(1));
+    }
+}
+
+fn selected_task_id(view: &TasksView) -> Option<TaskId> {
+    let index = view.filtered_indices.get(view.selected).copied()?;
+    let task = view.tasks.get(index)?;
+    Some(task.id.clone())
+}
+
+fn open_delete_task_confirm_from_tasks(model: &mut AppModel, view: &TasksView) -> bool {
+    let Some(task_index) = view.filtered_indices.get(view.selected).copied() else {
+        return false;
+    };
+    let Some(task) = view.tasks.get(task_index) else {
+        return false;
+    };
+
+    model.delete_task_confirm = Some(DeleteTaskConfirmDialog {
+        task_id: task.id.clone(),
+        task_title: task.title.clone(),
+        project_path: task.project_path.clone(),
+        selection: DeleteConfirmSelection::Cancel,
+        return_to_tasks: view.clone(),
+    });
+
+    true
+}
+
+fn default_task_create_project_path(model: &AppModel, view: &TasksView) -> PathBuf {
+    let selected_path = view
+        .filtered_indices
+        .get(view.selected)
+        .copied()
+        .and_then(|index| view.tasks.get(index).map(|task| task.project_path.clone()));
+    if let Some(path) = selected_path {
+        return path;
+    }
+
+    infer_project_path_for_new_task_view(view.return_to.as_ref(), model).unwrap_or_default()
+}
+
+fn infer_project_path_for_new_task(model: &AppModel) -> Option<PathBuf> {
+    infer_project_path_for_new_task_view(&model.view, model)
+}
+
+fn infer_project_path_for_new_task_view(view: &View, model: &AppModel) -> Option<PathBuf> {
+    match view {
+        View::Projects(projects_view) => {
+            let project_index = projects_view
+                .filtered_indices
+                .get(projects_view.selected)
+                .copied()?;
+            let project = model.data.projects.get(project_index)?;
+            Some(project.project_path.clone())
+        }
+        View::Sessions(sessions_view) => Some(sessions_view.project_path.clone()),
+        View::NewSession(new_session_view) => {
+            Some(new_session_view.from_sessions.project_path.clone())
+        }
+        View::SessionDetail(detail_view) => Some(detail_view.from_sessions.project_path.clone()),
+        View::Tasks(tasks_view) => {
+            infer_project_path_for_new_task_view(tasks_view.return_to.as_ref(), model)
+        }
+        View::TaskCreate(task_create) => {
+            if !task_create.project_path.as_os_str().is_empty() {
+                Some(task_create.project_path.clone())
+            } else {
+                infer_project_path_for_new_task_view(
+                    task_create.from_tasks.return_to.as_ref(),
+                    model,
+                )
+            }
+        }
+        View::TaskDetail(task_detail) => Some(task_detail.task.project_path.clone()),
+        View::Processes(processes_view) => {
+            infer_project_path_for_new_task_view(processes_view.return_to.as_ref(), model)
+        }
+        View::ProcessOutput(output_view) => {
+            infer_project_path_for_new_task_view(output_view.return_to.as_ref(), model)
+        }
+        View::Error => None,
+    }
+}
+
 fn open_delete_session_confirm(model: &mut AppModel, view: &SessionsView) -> bool {
     let Some(project) = view.current_project(&model.data.projects) else {
         return false;
@@ -2174,6 +2891,7 @@ fn update_sessions(
                 system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
+                delete_task_confirm: model.delete_task_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
                 project_stats_overlay: model.project_stats_overlay.clone(),
@@ -2227,6 +2945,7 @@ fn update_sessions(
                     system_menu: model.system_menu.clone(),
                     delete_confirm: model.delete_confirm.clone(),
                     delete_session_confirm: model.delete_session_confirm.clone(),
+                    delete_task_confirm: model.delete_task_confirm.clone(),
                     session_result_preview: model.session_result_preview.clone(),
                     session_stats_overlay: model.session_stats_overlay.clone(),
                     project_stats_overlay: model.project_stats_overlay.clone(),
@@ -2250,6 +2969,7 @@ fn update_sessions(
                 system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
+                delete_task_confirm: model.delete_task_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
                 project_stats_overlay: model.project_stats_overlay.clone(),
@@ -2296,6 +3016,7 @@ fn update_sessions(
             system_menu: model.system_menu.clone(),
             delete_confirm: model.delete_confirm.clone(),
             delete_session_confirm: model.delete_session_confirm.clone(),
+            delete_task_confirm: model.delete_task_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
             session_stats_overlay: model.session_stats_overlay.clone(),
             project_stats_overlay: model.project_stats_overlay.clone(),
@@ -2704,6 +3425,371 @@ fn update_session_detail(
     }
 
     model.view = View::SessionDetail(view);
+    (model, AppCommand::None)
+}
+
+fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (AppModel, AppCommand) {
+    let send_modifier = key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::SUPER)
+        || key.modifiers.contains(KeyModifiers::META);
+
+    match key.code {
+        KeyCode::F(3) => {
+            let Some(task_index) = view.filtered_indices.get(view.selected).copied() else {
+                return (model, AppCommand::None);
+            };
+            let Some(task) = view.tasks.get(task_index) else {
+                return (model, AppCommand::None);
+            };
+            let Some(project) = model
+                .data
+                .projects
+                .iter()
+                .find(|project| project.project_path == task.project_path)
+            else {
+                model.notice = Some("Project not indexed.".to_string());
+                model.view = View::Tasks(view);
+                return (model, AppCommand::None);
+            };
+
+            model.project_stats_overlay = Some(ProjectStatsOverlay::from_project(
+                project,
+                &model.session_index,
+            ));
+            model.help_open = false;
+            model.system_menu = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Esc => {
+            if !view.query.is_empty() {
+                view.query.clear();
+                apply_task_filter(&mut view);
+                model.view = View::Tasks(view);
+                return (model, AppCommand::None);
+            }
+
+            model.view = *view.return_to;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Backspace => {
+            if !view.query.is_empty() {
+                view.query.pop();
+                apply_task_filter(&mut view);
+                model.view = View::Tasks(view);
+                return (model, AppCommand::None);
+            }
+
+            model.view = *view.return_to;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Up => {
+            view.selected = view.selected.saturating_sub(1);
+        }
+        KeyCode::Down => {
+            if !view.filtered_indices.is_empty() {
+                view.selected =
+                    (view.selected + 1).min(view.filtered_indices.len().saturating_sub(1));
+            }
+        }
+        KeyCode::PageUp => {
+            let step = page_step_standard_list(model.terminal_size);
+            view.selected = view.selected.saturating_sub(step);
+        }
+        KeyCode::PageDown => {
+            if !view.filtered_indices.is_empty() {
+                let step = page_step_standard_list(model.terminal_size);
+                view.selected =
+                    (view.selected + step).min(view.filtered_indices.len().saturating_sub(1));
+            }
+        }
+        KeyCode::BackTab => {
+            view.engine = view.engine.toggle();
+        }
+        KeyCode::Delete => {
+            open_delete_task_confirm_from_tasks(&mut model, &view);
+        }
+        KeyCode::Enter if send_modifier => {
+            let Some(task_id) = selected_task_id(&view) else {
+                model.notice = Some("No task selected.".to_string());
+                model.view = View::Tasks(view);
+                return (model, AppCommand::None);
+            };
+            return (
+                model,
+                AppCommand::SpawnTask {
+                    engine: view.engine,
+                    task_id,
+                },
+            );
+        }
+        KeyCode::Enter => {
+            let Some(task_id) = selected_task_id(&view) else {
+                return (model, AppCommand::None);
+            };
+            return (
+                model,
+                AppCommand::OpenTaskDetail {
+                    from_tasks: view,
+                    task_id,
+                },
+            );
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => {
+            let project_path = default_task_create_project_path(&model, &view);
+            model.view = View::TaskCreate(TaskCreateView::new(view, project_path));
+            return (model, AppCommand::None);
+        }
+        KeyCode::Char(character) => {
+            if is_text_input_char(character) {
+                view.query.push(character);
+                apply_task_filter(&mut view);
+            }
+        }
+        _ => {}
+    }
+
+    model.view = View::Tasks(view);
+    (model, AppCommand::None)
+}
+
+fn update_task_create(
+    mut model: AppModel,
+    mut view: TaskCreateView,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    let command_modifier = key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::SUPER)
+        || key.modifiers.contains(KeyModifiers::META);
+
+    if let Some(overlay) = view.overlay.take() {
+        match overlay {
+            TaskCreateOverlay::ImagePath(mut editor) => {
+                match key.code {
+                    KeyCode::Esc => {
+                        view.overlay = None;
+                        model.view = View::TaskCreate(view);
+                        return (model, AppCommand::None);
+                    }
+                    KeyCode::Backspace => editor.backspace(),
+                    KeyCode::Enter => {
+                        let path = editor.text.trim().to_string();
+                        if path.is_empty() {
+                            model.notice = Some("Image path is empty.".to_string());
+                            view.overlay = Some(TaskCreateOverlay::ImagePath(editor));
+                            model.view = View::TaskCreate(view);
+                            return (model, AppCommand::None);
+                        }
+                        view.overlay = Some(TaskCreateOverlay::ImagePath(editor));
+                        model.view = View::TaskCreate(view);
+                        return (
+                            model,
+                            AppCommand::TaskCreateInsertImage {
+                                path: PathBuf::from(path),
+                            },
+                        );
+                    }
+                    KeyCode::Left => editor.move_left(),
+                    KeyCode::Right => editor.move_right(),
+                    KeyCode::Home => editor.move_home(),
+                    KeyCode::End => editor.move_end(),
+                    KeyCode::Delete => editor.delete_forward(),
+                    KeyCode::Char(character) => {
+                        if is_text_input_char(character) {
+                            editor.insert_char(character);
+                        }
+                    }
+                    _ => {}
+                }
+                view.overlay = Some(TaskCreateOverlay::ImagePath(editor));
+            }
+            TaskCreateOverlay::ProjectPath(mut editor) => {
+                match key.code {
+                    KeyCode::Esc => {
+                        view.overlay = None;
+                        model.view = View::TaskCreate(view);
+                        return (model, AppCommand::None);
+                    }
+                    KeyCode::Backspace => editor.backspace(),
+                    KeyCode::Enter => {
+                        let path = editor.text.trim().to_string();
+                        view.project_path = PathBuf::from(path);
+                        view.overlay = None;
+                        model.view = View::TaskCreate(view);
+                        return (model, AppCommand::None);
+                    }
+                    KeyCode::Left => editor.move_left(),
+                    KeyCode::Right => editor.move_right(),
+                    KeyCode::Home => editor.move_home(),
+                    KeyCode::End => editor.move_end(),
+                    KeyCode::Delete => editor.delete_forward(),
+                    KeyCode::Char(character) => {
+                        if is_text_input_char(character) {
+                            editor.insert_char(character);
+                        }
+                    }
+                    _ => {}
+                }
+                view.overlay = Some(TaskCreateOverlay::ProjectPath(editor));
+            }
+        }
+
+        model.view = View::TaskCreate(view);
+        return (model, AppCommand::None);
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            model.view = View::Tasks(view.from_tasks.clone());
+            return (model, AppCommand::None);
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') if command_modifier => {
+            let body = view.editor.text();
+            if body.trim().is_empty() {
+                model.notice = Some("Task is empty.".to_string());
+                model.view = View::TaskCreate(view);
+                return (model, AppCommand::None);
+            }
+            if view.project_path.as_os_str().is_empty() {
+                model.notice = Some("Project path is not set (Ctrl+P).".to_string());
+                model.view = View::TaskCreate(view);
+                return (model, AppCommand::None);
+            }
+
+            let from_tasks = view.from_tasks.clone();
+            return (
+                model,
+                AppCommand::CreateTask {
+                    from_tasks,
+                    project_path: view.project_path.clone(),
+                    body,
+                    image_paths: view.image_paths.clone(),
+                },
+            );
+        }
+        KeyCode::Char('i') | KeyCode::Char('I') if command_modifier => {
+            view.overlay = Some(TaskCreateOverlay::ImagePath(LineEditor::new()));
+        }
+        KeyCode::Char('p') | KeyCode::Char('P') if command_modifier => {
+            let current = view.project_path.display().to_string();
+            view.overlay = Some(TaskCreateOverlay::ProjectPath(LineEditor::from_text(
+                current,
+            )));
+        }
+        KeyCode::Enter => {
+            view.editor.insert_newline();
+        }
+        KeyCode::Backspace => {
+            view.editor.backspace();
+        }
+        KeyCode::Delete => {
+            view.editor.delete_forward();
+        }
+        KeyCode::Left => {
+            view.editor.move_left();
+        }
+        KeyCode::Right => {
+            view.editor.move_right();
+        }
+        KeyCode::Up => {
+            view.editor.move_up();
+        }
+        KeyCode::Down => {
+            view.editor.move_down();
+        }
+        KeyCode::Home => {
+            view.editor.move_home();
+        }
+        KeyCode::End => {
+            view.editor.move_end();
+        }
+        KeyCode::Tab => {
+            view.editor.insert_str("    ");
+        }
+        KeyCode::Char(character) => {
+            if is_text_input_char(character) {
+                view.editor.insert_char(character);
+            }
+        }
+        _ => {}
+    }
+
+    model.view = View::TaskCreate(view);
+    (model, AppCommand::None)
+}
+
+fn update_task_detail(
+    mut model: AppModel,
+    mut view: TaskDetailView,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    let send_modifier = key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::SUPER)
+        || key.modifiers.contains(KeyModifiers::META);
+
+    match key.code {
+        KeyCode::F(3) => {
+            let Some(project) = model
+                .data
+                .projects
+                .iter()
+                .find(|project| project.project_path == view.task.project_path)
+            else {
+                model.notice = Some("Project not indexed.".to_string());
+                model.view = View::TaskDetail(view);
+                return (model, AppCommand::None);
+            };
+
+            model.project_stats_overlay = Some(ProjectStatsOverlay::from_project(
+                project,
+                &model.session_index,
+            ));
+            model.help_open = false;
+            model.system_menu = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Esc | KeyCode::Backspace => {
+            model.view = View::Tasks(view.from_tasks.clone());
+            return (model, AppCommand::None);
+        }
+        KeyCode::BackTab => {
+            view.engine = view.engine.toggle();
+        }
+        KeyCode::Delete => {
+            model.delete_task_confirm = Some(DeleteTaskConfirmDialog {
+                task_id: view.task.id.clone(),
+                task_title: crate::domain::derive_task_title(&view.task.body),
+                project_path: view.task.project_path.clone(),
+                selection: DeleteConfirmSelection::Cancel,
+                return_to_tasks: view.from_tasks.clone(),
+            });
+        }
+        KeyCode::Up => {
+            view.scroll = view.scroll.saturating_sub(1);
+        }
+        KeyCode::Down => {
+            view.scroll = view.scroll.saturating_add(1);
+        }
+        KeyCode::PageUp => {
+            let step = page_step_standard_list(model.terminal_size) as u16;
+            view.scroll = view.scroll.saturating_sub(step);
+        }
+        KeyCode::PageDown => {
+            let step = page_step_standard_list(model.terminal_size) as u16;
+            view.scroll = view.scroll.saturating_add(step);
+        }
+        KeyCode::Enter if send_modifier => {
+            return (
+                model,
+                AppCommand::SpawnTask {
+                    engine: view.engine,
+                    task_id: view.task.id.clone(),
+                },
+            );
+        }
+        _ => {}
+    }
+
+    model.view = View::TaskDetail(view);
     (model, AppCommand::None)
 }
 
