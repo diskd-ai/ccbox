@@ -104,7 +104,11 @@ fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
 
     let bg = Color::DarkGray;
     let base_style = Style::default().fg(Color::White).bg(bg);
-    let hint_style = Style::default().fg(Color::Gray).bg(bg);
+    let hint_label_style = Style::default().fg(Color::Gray).bg(bg);
+    let hint_key_style = Style::default()
+        .fg(Color::LightBlue)
+        .bg(bg)
+        .add_modifier(Modifier::BOLD);
     let menu_open_index = model.system_menu.as_ref().map(|menu| menu.menu_index);
     let menus = crate::app::main_menus_for_view(&model.view);
     let active_style = Style::default()
@@ -130,12 +134,24 @@ fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
         spans.push(Span::styled(" ".to_string(), base_style));
     }
 
-    let hint = "(F2)";
     let left_width: usize = spans
         .iter()
         .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
         .sum();
-    let hint_width = UnicodeWidthStr::width(hint);
+    let hint_spans = vec![
+        Span::styled("F1", hint_key_style),
+        Span::styled(" Help", hint_label_style),
+        Span::styled("  ", base_style),
+        Span::styled("F2", hint_key_style),
+        Span::styled(" System", hint_label_style),
+        Span::styled("  ", base_style),
+        Span::styled("F3", hint_key_style),
+        Span::styled(" Window", hint_label_style),
+    ];
+    let hint_width: usize = hint_spans
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum();
     let width = bar_area.width as usize;
 
     if width > left_width + hint_width {
@@ -143,7 +159,7 @@ fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
             " ".repeat(width - left_width - hint_width),
             base_style,
         ));
-        spans.push(Span::styled(hint.to_string(), hint_style));
+        spans.extend(hint_spans);
     } else if width > left_width {
         spans.push(Span::styled(" ".repeat(width - left_width), base_style));
     }
@@ -250,7 +266,12 @@ fn render_main_menu_overlay(
         list_items.push(ListItem::new(Line::from(vec![
             Span::raw(label.to_string()),
             Span::raw(" ".repeat(gap + padding)),
-            Span::styled(hotkey.to_string(), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                hotkey.to_string(),
+                Style::default()
+                    .fg(Color::LightBlue)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ])));
     }
 

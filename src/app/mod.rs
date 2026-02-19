@@ -388,7 +388,7 @@ pub enum MainMenu {
 impl MainMenu {
     pub fn label(self) -> &'static str {
         match self {
-            Self::System => "📦 System",
+            Self::System => "System",
             Self::Projects => "Projects",
             Self::Sessions => "Sessions",
             Self::NewSession => "New Session",
