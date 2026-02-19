@@ -413,7 +413,31 @@ pub struct MainMenuEntry {
     pub key: MainMenuKey,
 }
 
-pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 4] = [
+pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 6] = [
+    MainMenuEntry {
+        label: "Help",
+        hotkey: "F1 or ?",
+        key: MainMenuKey {
+            code: KeyCode::F(1),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Close menu",
+        hotkey: "F2",
+        key: MainMenuKey {
+            code: KeyCode::F(2),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Window",
+        hotkey: "F3",
+        key: MainMenuKey {
+            code: KeyCode::F(3),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
     MainMenuEntry {
         label: "Rescan sessions",
         hotkey: "Ctrl+R",
@@ -427,14 +451,6 @@ pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 4] = [
         hotkey: "P",
         key: MainMenuKey {
             code: KeyCode::Char('P'),
-            modifiers: KeyModifiers::NONE,
-        },
-    },
-    MainMenuEntry {
-        label: "Help",
-        hotkey: "F1 or ?",
-        key: MainMenuKey {
-            code: KeyCode::F(1),
             modifiers: KeyModifiers::NONE,
         },
     },
@@ -561,12 +577,20 @@ pub const MAIN_MENU_NEW_SESSION_ITEMS: [MainMenuEntry; 3] = [
     },
 ];
 
-pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 5] = [
+pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 6] = [
     MainMenuEntry {
         label: "Jump Tool -> ToolOut",
         hotkey: "Enter",
         key: MainMenuKey {
             code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Switch pane focus",
+        hotkey: "Tab",
+        key: MainMenuKey {
+            code: KeyCode::Tab,
             modifiers: KeyModifiers::NONE,
         },
     },
@@ -1157,6 +1181,10 @@ fn update_system_menu_overlay(
             };
 
             model.system_menu = None;
+
+            if entry.key.code == KeyCode::F(2) && entry.key.modifiers == KeyModifiers::NONE {
+                return (model, AppCommand::None);
+            }
 
             let key = KeyEvent::new(entry.key.code, entry.key.modifiers);
             return update_on_key(model, key);
