@@ -11,6 +11,7 @@ All notable user-facing changes to `ccbox` are documented in this file.
 - TUI: `F3` shows project-level statistics (uses a cached session index for fast startup).
 - TUI: add "New Task" to the System menu.
 - TUI: add a Window menu to navigate between screens/windows.
+- TUI: focused pane borders are white; unfocused borders are dark gray.
 
 ### Fixes
 

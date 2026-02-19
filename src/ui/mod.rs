@@ -1515,29 +1515,30 @@ fn render_session_detail(
     let detail_area = panels[1];
 
     let focused_border_style = Style::default()
-        .fg(Color::LightBlue)
+        .fg(Color::White)
         .add_modifier(Modifier::BOLD);
+    let unfocused_border_style = Style::default().fg(Color::DarkGray);
     let focused = detail_view.focus;
 
     let timeline_border_style = if focused == SessionDetailFocus::Timeline {
         focused_border_style
     } else {
-        Style::default()
+        unfocused_border_style
     };
     let details_border_style = if focused == SessionDetailFocus::Details {
         focused_border_style
     } else {
-        Style::default()
+        unfocused_border_style
     };
     let timeline_title_style = if focused == SessionDetailFocus::Timeline {
         focused_border_style
     } else {
-        Style::default().add_modifier(Modifier::BOLD)
+        unfocused_border_style.add_modifier(Modifier::BOLD)
     };
     let details_title_style = if focused == SessionDetailFocus::Details {
         focused_border_style
     } else {
-        Style::default().add_modifier(Modifier::BOLD)
+        unfocused_border_style.add_modifier(Modifier::BOLD)
     };
 
     let max_width = (list_area.width as usize).saturating_sub(6);
@@ -1587,7 +1588,7 @@ fn render_session_detail(
     let list_total = detail_view.items.len();
     if list_total > list_viewport && list_viewport > 0 {
         let scrollbar_style = if focused == SessionDetailFocus::Timeline {
-            Style::default().fg(Color::LightBlue)
+            Style::default().fg(Color::White)
         } else {
             Style::default().fg(Color::DarkGray)
         };
@@ -1630,7 +1631,7 @@ fn render_session_detail(
 
     if detail_total > detail_viewport && detail_viewport > 0 {
         let scrollbar_style = if focused == SessionDetailFocus::Details {
-            Style::default().fg(Color::LightBlue)
+            Style::default().fg(Color::White)
         } else {
             Style::default().fg(Color::DarkGray)
         };
