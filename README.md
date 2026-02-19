@@ -88,21 +88,21 @@ What’s happening / features:
 ## Run
 
 ```bash
-cargo run
+ccbox
 ```
 
 CLI mode (no TUI):
 
 ```bash
-cargo run -- projects
-cargo run -- sessions                     # defaults to current folder (or a parent folder) project
-cargo run -- sessions "/path/to/project"
-cargo run -- history                      # defaults to latest session in current folder project
-cargo run -- history "/path/to/session.jsonl"
-cargo run -- history "/path/to/session.jsonl" --full
-cargo run -- sessions --limit 50 --offset 0 --size
-cargo run -- history --limit 200 --offset 0 --full --size
-cargo run -- update
+ccbox projects
+ccbox sessions                     # defaults to current folder (or a parent folder) project
+ccbox sessions "/path/to/project"
+ccbox history                      # defaults to latest session in current folder project
+ccbox history "/path/to/session.jsonl"
+ccbox history "/path/to/session.jsonl" --full
+ccbox sessions --limit 50 --offset 0 --size
+ccbox history --limit 200 --offset 0 --full --size
+ccbox update
 ```
 
 CLI details:
