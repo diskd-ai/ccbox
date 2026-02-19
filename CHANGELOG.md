@@ -9,6 +9,14 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.10] - 2026-02-19
+
+### Changes
+
+- TUI: add mouse support (wheel scrolling and click-to-select/focus).
+
+### Fixes
+
 ## [0.1.9] - 2026-02-19
 
 ### Changes
