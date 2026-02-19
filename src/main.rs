@@ -66,7 +66,7 @@ fn should_print_version() -> bool {
 
 fn print_help() {
     println!(
-        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}\n  {name} --help\n  {name} --version\n\nENV:\n  CODEX_SESSIONS_DIR  Override the sessions directory (default: $HOME/.codex/sessions)\n",
+        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}\n  {name} --help\n  {name} --version\n\nENV:\n  CODEX_SESSIONS_DIR  Override the sessions directory (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n",
         name = env!("CARGO_PKG_NAME")
     );
 }

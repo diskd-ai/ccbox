@@ -13,8 +13,12 @@ pub fn delete_session_logs(sessions_dir: &Path, log_paths: &[PathBuf]) -> Delete
     let mut failed = 0usize;
     let mut skipped_outside_sessions_dir = 0usize;
 
+    let sessions_dir_canonical =
+        fs::canonicalize(sessions_dir).unwrap_or_else(|_| sessions_dir.to_path_buf());
+
     for path in log_paths {
-        if !path.starts_with(sessions_dir) {
+        let path_canonical = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+        if !path_canonical.starts_with(&sessions_dir_canonical) {
             skipped_outside_sessions_dir += 1;
             continue;
         }
@@ -31,4 +35,3 @@ pub fn delete_session_logs(sessions_dir: &Path, log_paths: &[PathBuf]) -> Delete
         skipped_outside_sessions_dir,
     }
 }
-

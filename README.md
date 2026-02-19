@@ -90,7 +90,7 @@ cargo run
 ```
 
 Optional overrides:
-- `CODEX_SESSIONS_DIR` (defaults to `$HOME/.codex/sessions`)
+- `CODEX_SESSIONS_DIR` (defaults to `~/.codex/sessions`; Windows: `%USERPROFILE%\\.codex\\sessions`)
 
 Notes:
 - Spawning sessions requires `codex` on your `$PATH` (and `claude` if you switch engines).
