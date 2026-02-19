@@ -6,6 +6,12 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Changes
 
+### Fixes
+
+## [0.1.6] - 2026-02-19
+
+### Changes
+
 - TUI: show `F1`/`F2`/`F3` shortcuts in the menu bar.
 - TUI: Session Stats window uses colored metrics and comma-formatted numbers.
 - TUI: `F3` shows project-level statistics (uses a cached session index for fast startup).
