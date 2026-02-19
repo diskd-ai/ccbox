@@ -1,3 +1,4 @@
+mod codex_fork;
 mod delete;
 mod processes;
 mod scan;
@@ -7,6 +8,7 @@ mod tasks;
 mod update;
 mod watch;
 
+pub use codex_fork::*;
 pub use delete::*;
 pub use processes::*;
 pub use scan::*;

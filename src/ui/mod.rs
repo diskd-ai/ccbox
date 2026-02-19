@@ -723,10 +723,12 @@ fn render_new_session(
     new_session_view: &crate::app::NewSessionView,
 ) {
     let area = inner_area(area);
+    let is_fork = new_session_view.fork.is_some();
+    let header_height = if is_fork { 4 } else { 3 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(header_height),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
@@ -737,23 +739,46 @@ fn render_new_session(
         .projects
         .iter()
         .find(|project| project.project_path == new_session_view.from_sessions.project_path);
-    let title = match project {
-        Some(project) => format!(
+    let title = match (is_fork, project) {
+        (true, Some(project)) => format!(
+            "Fork Resume · {} ({})",
+            project.name,
+            project.project_path.display()
+        ),
+        (true, None) => format!(
+            "Fork Resume · {}",
+            new_session_view.from_sessions.project_path.display()
+        ),
+        (false, Some(project)) => format!(
             "New Session · {} ({})",
             project.name,
             project.project_path.display()
         ),
-        None => format!(
+        (false, None) => format!(
             "New Session · {}",
             new_session_view.from_sessions.project_path.display()
         ),
     };
-    let header_hint = "Write a prompt, then press Ctrl+Enter (or Cmd+Enter if supported) to send. Shift+Tab switches engine. F4 switches I/O mode.";
-    let header = Paragraph::new(truncate_end(
-        header_hint,
-        (chunks[0].width as usize).saturating_sub(4),
-    ))
-    .block(
+
+    let header_inner_width = (chunks[0].width as usize).saturating_sub(4);
+    let header_content = if let Some(fork) = new_session_view.fork.as_ref() {
+        let fork_line = format!(
+            "Forking from: {}  (parent {})",
+            fork.label,
+            short_id(&fork.parent_session_id)
+        );
+        let hint_line =
+            "Edit the prompt, then press Ctrl+Enter (or Cmd+Enter) to resume. Esc cancels.";
+        Paragraph::new(vec![
+            Line::from(truncate_end(&fork_line, header_inner_width)),
+            Line::from(truncate_end(hint_line, header_inner_width)),
+        ])
+    } else {
+        let header_hint = "Write a prompt, then press Ctrl+Enter (or Cmd+Enter if supported) to send. Shift+Tab switches engine. F4 switches I/O mode.";
+        Paragraph::new(truncate_end(header_hint, header_inner_width))
+    };
+
+    let header = header_content.block(
         Block::default()
             .borders(Borders::ALL)
             .padding(Padding::horizontal(1))
@@ -821,7 +846,11 @@ fn render_new_session(
         }
     }
 
-    let footer_text = "Keys: edit text  Ctrl+Enter/Cmd+Enter=send  Shift+Tab=engine  F4=I/O mode  Esc=cancel  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help";
+    let footer_text = if is_fork {
+        "Keys: edit text  Ctrl+Enter/Cmd+Enter=send  Esc=cancel  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+    } else {
+        "Keys: edit text  Ctrl+Enter/Cmd+Enter=send  Shift+Tab=engine  F4=I/O mode  Esc=cancel  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+    };
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(footer_text.to_string()));
     if let Some(notice) = model.notice.as_deref() {
@@ -847,10 +876,17 @@ fn render_new_session(
             .fg(Color::Blue)
             .add_modifier(Modifier::BOLD),
     ));
-    spans.push(Span::styled(
-        " (Shift+Tab)".to_string(),
-        Style::default().fg(Color::Blue),
-    ));
+    if is_fork {
+        spans.push(Span::styled(
+            " (locked)".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else {
+        spans.push(Span::styled(
+            " (Shift+Tab)".to_string(),
+            Style::default().fg(Color::Blue),
+        ));
+    }
     spans.push(Span::raw("  ·  "));
     spans.push(Span::styled(
         format!("I/O: {}", new_session_view.io_mode.label()),
@@ -858,10 +894,17 @@ fn render_new_session(
             .fg(Color::Blue)
             .add_modifier(Modifier::BOLD),
     ));
-    spans.push(Span::styled(
-        " (F4)".to_string(),
-        Style::default().fg(Color::Blue),
-    ));
+    if is_fork {
+        spans.push(Span::styled(
+            " (locked)".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else {
+        spans.push(Span::styled(
+            " (F4)".to_string(),
+            Style::default().fg(Color::Blue),
+        ));
+    }
     if processes_running(model) {
         spans.push(Span::raw("  ·  "));
         spans.push(Span::styled(
@@ -2400,7 +2443,7 @@ fn session_detail_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let mut parts = vec![
-        "Keys: Tab=focus  arrows=move/scroll  PgUp/PgDn=page  Enter=ToolOut (Tool)  o=result  F3=stats  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+        "Keys: Tab=focus  arrows=move/scroll  PgUp/PgDn=page  Enter=ToolOut (Tool)  f=fork  o=result  F3=stats  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
             .to_string(),
         format!("items: {item_count}"),
     ];
@@ -3961,6 +4004,9 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - Session Detail: o shows Result (last Out)"),
         Line::from("  - Session Detail: F3 shows Stats"),
         Line::from("  - Session Detail: Enter jumps to ToolOut for Tool calls"),
+        Line::from(
+            "  - Session Detail: f forks/resumes from selected Turn/User/Out/ToolOut record (Codex)",
+        ),
         Line::from("  - Session Detail: c toggles Visible Context"),
         Line::from("  - Processes: a=attach (TTY), s/e/l=open output, k=kill, Enter=open session"),
         Line::from(""),

@@ -1,9 +1,12 @@
+mod fork;
 mod line_editor;
 mod text_editor;
 
+use crate::app::fork::{default_fork_prompt, fork_context_from_timeline_item};
 use crate::domain::{
-    AgentEngine, ProjectIndex, ProjectSummary, SessionStats, SessionSummary, SpawnIoMode, Task,
-    TaskId, TaskImage, TimelineItem, TimelineItemKind, TurnContextSummary, index_projects,
+    AgentEngine, ForkContext, ProjectIndex, ProjectSummary, SessionStats, SessionSummary,
+    SpawnIoMode, Task, TaskId, TaskImage, TimelineItem, TimelineItemKind, TurnContextSummary,
+    index_projects,
 };
 use crate::infra::{ScanWarningCount, SessionIndex};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -784,12 +787,20 @@ pub const MAIN_MENU_NEW_SESSION_ITEMS: [MainMenuEntry; 4] = [
     },
 ];
 
-pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 6] = [
+pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 7] = [
     MainMenuEntry {
         label: "Jump Tool -> ToolOut",
         hotkey: "Enter",
         key: MainMenuKey {
             code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Fork/Resume from here",
+        hotkey: "f",
+        key: MainMenuKey {
+            code: KeyCode::Char('f'),
             modifiers: KeyModifiers::NONE,
         },
     },
@@ -1329,6 +1340,7 @@ pub struct NewSessionView {
     pub editor: TextEditor,
     pub engine: AgentEngine,
     pub io_mode: SpawnIoMode,
+    pub fork: Option<ForkContext>,
 }
 
 impl NewSessionView {
@@ -1338,6 +1350,7 @@ impl NewSessionView {
             editor: TextEditor::new(),
             engine: AgentEngine::Codex,
             io_mode: SpawnIoMode::Pipes,
+            fork: None,
         }
     }
 }
@@ -1559,6 +1572,10 @@ pub enum AppCommand {
         project_path: PathBuf,
         prompt: String,
         io_mode: SpawnIoMode,
+    },
+    ForkResumeCodexFromTimeline {
+        fork: ForkContext,
+        prompt: String,
     },
     KillProcess {
         process_id: String,
@@ -3111,10 +3128,18 @@ fn update_new_session(
             return (model, AppCommand::None);
         }
         KeyCode::F(4) => {
-            view.io_mode = view.io_mode.toggle();
+            if view.fork.is_some() {
+                model.notice = Some("I/O mode is locked for fork resume.".to_string());
+            } else {
+                view.io_mode = view.io_mode.toggle();
+            }
         }
         KeyCode::BackTab => {
-            view.engine = view.engine.toggle();
+            if view.fork.is_some() {
+                model.notice = Some("Engine is locked to Codex for fork resume.".to_string());
+            } else {
+                view.engine = view.engine.toggle();
+            }
         }
         KeyCode::Enter if send_modifier => {
             let prompt = view.editor.text();
@@ -3124,10 +3149,17 @@ fn update_new_session(
                 return (model, AppCommand::None);
             }
 
+            model.view = View::Sessions(view.from_sessions.clone());
+            if let Some(fork) = view.fork.clone() {
+                return (
+                    model,
+                    AppCommand::ForkResumeCodexFromTimeline { fork, prompt },
+                );
+            }
+
             let project_path = view.from_sessions.project_path.clone();
             let engine = view.engine;
             let io_mode = view.io_mode;
-            model.view = View::Sessions(view.from_sessions.clone());
             return (
                 model,
                 AppCommand::SpawnAgentSession {
@@ -3499,6 +3531,35 @@ fn update_session_detail(
                         model.view = View::SessionDetail(view);
                         return (model, AppCommand::None);
                     }
+                }
+            }
+        }
+        KeyCode::Char('f') | KeyCode::Char('F') => {
+            if view.items.is_empty() {
+                model.notice = Some("No timeline items.".to_string());
+                model.view = View::SessionDetail(view);
+                return (model, AppCommand::None);
+            }
+
+            let selected = view.selected.min(view.items.len().saturating_sub(1));
+            let Some(item) = view.items.get(selected) else {
+                model.view = View::SessionDetail(view);
+                return (model, AppCommand::None);
+            };
+
+            match fork_context_from_timeline_item(&view.session, item) {
+                Ok(fork) => {
+                    let mut new_view = NewSessionView::new(view.from_sessions.clone());
+                    new_view.engine = AgentEngine::Codex;
+                    new_view.io_mode = SpawnIoMode::Pipes;
+                    new_view.fork = Some(fork.clone());
+                    new_view.editor.insert_str(&default_fork_prompt(&fork));
+
+                    model.view = View::NewSession(new_view);
+                    return (model, AppCommand::None);
+                }
+                Err(error) => {
+                    model.notice = Some(error.to_string());
                 }
             }
         }

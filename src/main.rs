@@ -14,9 +14,10 @@ use crate::domain::{
 use crate::infra::{
     AttachTtyError, KillProcessError, ProcessExit, ProcessManager, ProcessSignal, ResizeTtyError,
     SessionIndex, TaskStore, WatchSignal, WriteTtyError, delete_session_logs,
-    load_last_assistant_output, load_session_index, load_session_timeline, read_from_offset,
-    read_tail, refresh_session_index, resolve_ccbox_state_dir, resolve_sessions_dir,
-    save_session_index, scan_sessions_dir, watch_sessions_dir,
+    fork_codex_session_log_at_cut, load_last_assistant_output, load_session_index,
+    load_session_timeline, read_from_offset, read_tail, refresh_session_index,
+    resolve_ccbox_state_dir, resolve_sessions_dir, save_session_index, scan_sessions_dir,
+    watch_sessions_dir,
 };
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyboardEnhancementFlags,
@@ -859,6 +860,79 @@ fn run(
                                 Err(error) => {
                                     *model = model.with_notice(Some(format!(
                                         "Failed to spawn process: {error}"
+                                    )));
+                                }
+                            }
+                        }
+                        AppCommand::ForkResumeCodexFromTimeline { fork, prompt } => {
+                            let Some(manager) = process_manager.as_mut() else {
+                                *model = model
+                                    .with_notice(Some("Process spawning is disabled.".to_string()));
+                                continue;
+                            };
+
+                            let forked = match fork_codex_session_log_at_cut(
+                                &model.data.sessions_dir,
+                                &fork.parent_log_path,
+                                fork.cut,
+                            ) {
+                                Ok(forked) => forked,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to fork session log: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            match manager.spawn_codex_resume_process(
+                                &fork.project_path,
+                                &forked.session_id,
+                                &prompt,
+                            ) {
+                                Ok(spawned) => {
+                                    let io_mode = match spawned.io {
+                                        crate::infra::SpawnedAgentIo::Pipes {
+                                            stdout_path,
+                                            stderr_path,
+                                            log_path,
+                                        } => crate::app::ProcessIoMode::Pipes {
+                                            stdout_path,
+                                            stderr_path,
+                                            log_path,
+                                        },
+                                        crate::infra::SpawnedAgentIo::Tty {
+                                            transcript_path,
+                                            log_path,
+                                        } => crate::app::ProcessIoMode::Tty {
+                                            transcript_path,
+                                            log_path,
+                                        },
+                                    };
+
+                                    model.processes.push(crate::app::ProcessInfo {
+                                        id: spawned.id.clone(),
+                                        pid: spawned.pid,
+                                        engine: spawned.engine,
+                                        project_path: spawned.project_path.clone(),
+                                        prompt_preview: spawned.prompt_preview.clone(),
+                                        started_at: spawned.started_at,
+                                        status: crate::app::ProcessStatus::Running,
+                                        io_mode,
+                                        session_id: Some(forked.session_id.clone()),
+                                        session_log_path: Some(forked.log_path.clone()),
+                                    });
+
+                                    *model = model.with_notice(Some(format!(
+                                        "Forked and resumed Codex ({})",
+                                        spawned.id
+                                    )));
+                                }
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to spawn resume process: {error}. Forked session: {} ({})",
+                                        forked.session_id,
+                                        forked.log_path.display()
                                     )));
                                 }
                             }

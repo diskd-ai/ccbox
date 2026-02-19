@@ -24,7 +24,7 @@ walkdir = "2.5.0"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 sqlx = { version = "0.8.3", default-features = false, features = ["macros", "migrate", "sqlite", "runtime-tokio-rustls"] }
 tokio = { version = "1.43.0", features = ["rt-multi-thread"] }
-uuid = { version = "1.15.1", features = ["v4"] }
+uuid = { version = "1.15.1", features = ["v4", "v7"] }
 portable-pty = "0.9.0"
 
 [dev-dependencies]

@@ -100,12 +100,14 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
     let mut truncated = false;
 
     let mut turn_contexts = BTreeMap::new();
+    let mut turn_context_line_nos: BTreeMap<String, u64> = BTreeMap::new();
     let mut current_turn_id: Option<String> = None;
     let mut last_emitted_turn_id: Option<String> = None;
     let mut items: Vec<TimelineItem> = Vec::new();
     let mut last_token_count_fingerprint: Option<String> = None;
     let mut last_token_count_index: Option<usize> = None;
 
+    let mut line_no: u64 = 0;
     for line_result in reader.lines() {
         let line = match line_result {
             Ok(line) => line,
@@ -115,6 +117,7 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
                 break;
             }
         };
+        line_no = line_no.saturating_add(1);
 
         let value: serde_json::Value = match serde_json::from_str(&line) {
             Ok(value) => value,
@@ -127,12 +130,14 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
         match parse_log_value(&value, current_turn_id.as_deref()) {
             ParsedLogLine::TurnContext(ctx) => {
                 current_turn_id = Some(ctx.turn_id.clone());
+                turn_context_line_nos.insert(ctx.turn_id.clone(), line_no);
                 turn_contexts.insert(ctx.turn_id.clone(), ctx);
             }
             ParsedLogLine::TurnIdHint(turn_id) => {
                 current_turn_id = Some(turn_id);
             }
-            ParsedLogLine::Item(item) => {
+            ParsedLogLine::Item(mut item) => {
+                item.source_line_no = Some(line_no);
                 let is_token_count = item.kind == TimelineItemKind::TokenCount;
 
                 if is_token_count {
@@ -158,7 +163,10 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
                             truncated = true;
                             break;
                         }
-                        items.push(make_turn_item(turn_id));
+                        items.push(make_turn_item(
+                            turn_id,
+                            turn_context_line_nos.get(turn_id).copied(),
+                        ));
                         last_emitted_turn_id = Some(turn_id.to_string());
                     }
                 }
@@ -185,11 +193,12 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
     })
 }
 
-fn make_turn_item(turn_id: &str) -> TimelineItem {
+fn make_turn_item(turn_id: &str, source_line_no: Option<u64>) -> TimelineItem {
     TimelineItem {
         kind: TimelineItemKind::Turn,
         turn_id: Some(turn_id.to_string()),
         call_id: None,
+        source_line_no,
         timestamp: None,
         timestamp_ms: None,
         summary: format!("Turn {}", short_id(turn_id)),
@@ -293,6 +302,77 @@ mod tests {
             .expect("token count");
 
         assert!(first_token_index > tool_out_index);
+    }
+
+    #[test]
+    fn sets_source_line_numbers_for_items_and_turn_markers() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+
+        let lines = [
+            serde_json::json!({
+                "timestamp": "2026-02-18T21:45:57.803Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "s1",
+                    "timestamp": "2026-02-18T21:45:57.803Z",
+                    "cwd": "/tmp/project"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:00.000Z",
+                "type": "turn_context",
+                "payload": { "turn_id": "t1", "cwd": "/tmp/project" }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:01.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "hello" }]
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:02.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "ok" }]
+                }
+            }),
+        ];
+
+        let body = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, body).expect("write");
+
+        let timeline = load_session_timeline(&path).expect("load");
+
+        let turn = timeline
+            .items
+            .iter()
+            .find(|item| item.kind == TimelineItemKind::Turn)
+            .expect("turn item");
+        assert_eq!(turn.source_line_no, Some(2));
+
+        let user = timeline
+            .items
+            .iter()
+            .find(|item| item.kind == TimelineItemKind::User)
+            .expect("user item");
+        assert_eq!(user.source_line_no, Some(3));
+
+        let out = timeline
+            .items
+            .iter()
+            .find(|item| item.kind == TimelineItemKind::Assistant)
+            .expect("assistant item");
+        assert_eq!(out.source_line_no, Some(4));
     }
 
     #[test]

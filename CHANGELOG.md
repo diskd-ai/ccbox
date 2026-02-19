@@ -7,6 +7,7 @@ All notable user-facing changes to `ccbox` are documented in this file.
 ### Changes
 
 - TUI: add `TTY` spawn mode for New Session with attach/detach from Processes (`a` to attach, `Ctrl-]` to detach).
+- TUI: fork/resume Codex from a selected Session Detail timeline record (mid-session resume).
 
 ### Fixes
 

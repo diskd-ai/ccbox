@@ -70,3 +70,18 @@ pub struct ProjectSummary {
     pub sessions: Vec<SessionSummary>,
     pub last_modified: Option<SystemTime>,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ForkCut {
+    BeforeLine { line_no: u64 },
+    AfterLine { line_no: u64 },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForkContext {
+    pub parent_session_id: String,
+    pub parent_log_path: PathBuf,
+    pub project_path: PathBuf,
+    pub cut: ForkCut,
+    pub label: String,
+}

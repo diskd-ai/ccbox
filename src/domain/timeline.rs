@@ -20,6 +20,12 @@ pub struct TimelineItem {
     pub kind: TimelineItemKind,
     pub turn_id: Option<String>,
     pub call_id: Option<String>,
+    /// 1-based JSONL line number in the source log, when this item was derived from a concrete
+    /// source line.
+    ///
+    /// Synthetic items (like `Turn`) may also carry a source line reference (e.g. the associated
+    /// `turn_context` line).
+    pub source_line_no: Option<u64>,
     pub timestamp: Option<String>,
     pub timestamp_ms: Option<i64>,
     pub summary: String,
@@ -173,6 +179,7 @@ fn parse_event_msg_value(
             kind: TimelineItemKind::TokenCount,
             turn_id: current_turn_id.map(str::to_string),
             call_id: None,
+            source_line_no: None,
             timestamp,
             timestamp_ms,
             summary,
@@ -216,6 +223,7 @@ fn parse_response_item_value(
                 kind: TimelineItemKind::Thinking,
                 turn_id: current_turn_id.map(str::to_string),
                 call_id: None,
+                source_line_no: None,
                 timestamp,
                 timestamp_ms,
                 summary,
@@ -283,6 +291,7 @@ fn parse_message_item(
         kind,
         turn_id: current_turn_id.map(str::to_string),
         call_id: None,
+        source_line_no: None,
         timestamp,
         timestamp_ms,
         summary,
@@ -314,6 +323,7 @@ fn parse_function_call(
         kind: TimelineItemKind::ToolCall,
         turn_id: current_turn_id.map(str::to_string),
         call_id,
+        source_line_no: None,
         timestamp,
         timestamp_ms,
         summary: format!("{name}()"),
@@ -344,6 +354,7 @@ fn parse_function_call_output(
         kind: TimelineItemKind::ToolOutput,
         turn_id: current_turn_id.map(str::to_string),
         call_id,
+        source_line_no: None,
         timestamp,
         timestamp_ms,
         summary,
@@ -375,6 +386,7 @@ fn parse_custom_tool_call(
         kind: TimelineItemKind::ToolCall,
         turn_id: current_turn_id.map(str::to_string),
         call_id,
+        source_line_no: None,
         timestamp,
         timestamp_ms,
         summary: name.to_string(),
@@ -418,6 +430,7 @@ fn parse_custom_tool_call_output(
         kind: TimelineItemKind::ToolOutput,
         turn_id: current_turn_id.map(str::to_string),
         call_id,
+        source_line_no: None,
         timestamp,
         timestamp_ms,
         summary,

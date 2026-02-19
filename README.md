@@ -61,6 +61,7 @@ What’s happening / features:
 - Timeline view of the session: messages, outputs, and other events in order.
 - Details are always expanded; `Enter` jumps Tool → ToolOut; `c` adjusts the visible context window.
 - `o` copies/opens the last “Out” result quickly.
+- `f` forks/resumes Codex from the selected Turn/User/Out/ToolOut record (mid-session resume).
 
 ### New Session
 
@@ -153,6 +154,7 @@ Example prompts:
 - Sessions: `Enter` opens · `Space` result (last Out) · `n` new session · `Del`/`Backspace` delete (confirm) · `Esc` back
 - New Session: edit/paste · `Ctrl+Enter`/`Cmd+Enter` send · `Shift+Tab` switch engine · `F4` switch `Pipes`/`TTY` · `Esc` cancel
 - Session Detail: `Enter` ToolOut (Tool call) · `o` result (last Out) · `c` visible context window · `Esc`/`Backspace` back
+- Session Detail: `f` forks/resumes from selected Turn/User/Out/ToolOut record (Codex)
 - Processes: `a` attach (TTY) · `Ctrl-]` detach · `s` stdout · `e` stderr · `l` log · `k` kill · `Enter` opens session (Codex only)
 
 ## License

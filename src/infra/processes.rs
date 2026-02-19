@@ -190,6 +190,124 @@ impl ProcessManager {
         }
     }
 
+    pub fn spawn_codex_resume_process(
+        &mut self,
+        project_path: &Path,
+        session_id: &str,
+        prompt: &str,
+    ) -> Result<SpawnedAgentProcess, SpawnAgentProcessError> {
+        let started_at = SystemTime::now();
+        let id = format!("p{}", self.next_id);
+        self.next_id = self.next_id.saturating_add(1);
+
+        let process_dir = self.logs_dir.join(&id);
+        fs::create_dir_all(&process_dir).map_err(SpawnAgentProcessError::CreateProcessDir)?;
+
+        let prompt_path = process_dir.join("prompt.txt");
+        fs::write(&prompt_path, prompt).map_err(SpawnAgentProcessError::WritePrompt)?;
+
+        let stdout_path = process_dir.join("stdout.log");
+        let stderr_path = process_dir.join("stderr.log");
+        let log_path = process_dir.join("process.log");
+
+        let stdout_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&stdout_path)
+            .map_err(SpawnAgentProcessError::OpenStdout)?;
+        let stderr_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&stderr_path)
+            .map_err(SpawnAgentProcessError::OpenStderr)?;
+        let combined_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&log_path)
+            .map_err(SpawnAgentProcessError::OpenLog)?;
+
+        let combined_writer = Arc::new(Mutex::new(io::BufWriter::new(combined_file)));
+        {
+            let mut writer = combined_writer.lock().map_err(|_| {
+                SpawnAgentProcessError::OpenLog(io::Error::other("log lock poisoned"))
+            })?;
+            let _ = writeln!(
+                writer,
+                "engine: {}\nmode: resume\nresume_session_id: {}\nproject: {}\nstarted_at: {:?}\n---",
+                AgentEngine::Codex.label(),
+                session_id,
+                project_path.display(),
+                started_at
+            );
+        }
+
+        let prompt_preview = first_non_empty_line(prompt)
+            .unwrap_or_else(|| "(empty prompt)".to_string())
+            .chars()
+            .take(120)
+            .collect::<String>();
+
+        let mut command =
+            build_codex_exec_resume_command(project_path, session_id, &self.sessions_dir);
+        let mut child = command.spawn().map_err(SpawnAgentProcessError::Spawn)?;
+        let pid = child.id();
+
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(prompt.as_bytes());
+            let _ = stdin.write_all(b"\n");
+        }
+
+        let stdout = child.stdout.take().ok_or_else(|| {
+            SpawnAgentProcessError::OpenStdout(io::Error::other("stdout missing"))
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            SpawnAgentProcessError::OpenStderr(io::Error::other("stderr missing"))
+        })?;
+
+        let sessions_dir = self.sessions_dir.clone();
+        let tx = self.tx.clone();
+        let id_for_stdout = id.clone();
+        let stdout_combined = combined_writer.clone();
+        std::thread::spawn(move || {
+            pipe_reader_thread(
+                stdout,
+                stdout_file,
+                PipeReaderContext {
+                    kind: StreamKind::Stdout,
+                    combined: stdout_combined,
+                    engine: AgentEngine::Codex,
+                    sessions_dir,
+                    process_id: id_for_stdout,
+                    tx,
+                },
+            );
+        });
+
+        let stderr_combined = combined_writer.clone();
+        std::thread::spawn(move || {
+            pipe_reader_thread_simple(StreamKind::Stderr, stderr, stderr_file, stderr_combined);
+        });
+
+        self.pipes_children.insert(id.clone(), child);
+
+        Ok(SpawnedAgentProcess {
+            id,
+            pid,
+            engine: AgentEngine::Codex,
+            project_path: project_path.to_path_buf(),
+            started_at,
+            prompt_preview,
+            io: SpawnedAgentIo::Pipes {
+                stdout_path,
+                stderr_path,
+                log_path,
+            },
+        })
+    }
+
     fn spawn_agent_process_pipes(
         &mut self,
         engine: AgentEngine,
@@ -609,6 +727,29 @@ fn build_engine_command(
             command
         }
     }
+}
+
+fn build_codex_exec_resume_command(
+    project_path: &Path,
+    session_id: &str,
+    sessions_dir: &Path,
+) -> Command {
+    let mut command = Command::new("codex");
+    command
+        .arg("exec")
+        .arg("resume")
+        .arg("--full-auto")
+        .arg("--json")
+        .arg("-C")
+        .arg(project_path)
+        .arg(session_id)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .current_dir(project_path)
+        .env("CODEX_SESSIONS_DIR", sessions_dir)
+        .arg("-");
+    command
 }
 
 fn build_engine_command_tty(
