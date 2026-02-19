@@ -12,6 +12,20 @@ Prototype features:
 - Processes screen (`P`) for stdout/stderr/log viewing + killing spawned agents
 - Auto-rescans when the sessions directory changes (file watcher)
 
+## Roadmap
+
+1. Manage spawned sessions (processes) and their lifecycle.
+2. Manage a tasks queue and assign tasks to an engine (Codex/Claude).
+3. Support multi-session workflows (handoffs, context carry, session grouping).
+4. Manage Ralph loops.
+5. Loops planning and task decomposition routines.
+6. Remote control via channels:
+   - JSON-RPC
+   - Telegram
+   - Slack
+   - WhatsApp
+   - Email
+
 ## Run
 
 ```bash

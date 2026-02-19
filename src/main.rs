@@ -29,6 +29,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), app::AppError> {
+    if should_print_help() {
+        print_help();
+        return Ok(());
+    }
+    if should_print_version() {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let sessions_dir = resolve_sessions_dir()?;
     let initial_data = match scan_sessions_dir(&sessions_dir) {
         Ok(output) => {
@@ -45,6 +54,21 @@ fn main() -> Result<(), app::AppError> {
     let result = run(&mut terminal, &mut model);
     restore_terminal(&mut terminal)?;
     result
+}
+
+fn should_print_help() -> bool {
+    std::env::args().any(|arg| arg == "--help" || arg == "-h")
+}
+
+fn should_print_version() -> bool {
+    std::env::args().any(|arg| arg == "--version" || arg == "-V")
+}
+
+fn print_help() {
+    println!(
+        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}\n  {name} --help\n  {name} --version\n\nENV:\n  CODEX_SESSIONS_DIR  Override the sessions directory (default: $HOME/.codex/sessions)\n",
+        name = env!("CARGO_PKG_NAME")
+    );
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>, app::AppError> {
