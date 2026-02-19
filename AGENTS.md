@@ -44,6 +44,11 @@ CODEX_SESSIONS_DIR=/path/to/sessions cargo run
 - Branch naming: use hyphens, not slashes (e.g., `alexeus-session-browser`).
 - PRs: explain the “why”, link issues, list verification steps (commands run), and include screenshots/recordings for UI changes.
 
+## Agent Workspace
+
+- Store design documents in `.agents/designs/`.
+- Store task notes and follow-ups in `.agents/tasks/`.
+
 ## Release Guidelines
 
 - Create a release only when explicitly requested by the maintainer (do not bump versions or push tags by default).
