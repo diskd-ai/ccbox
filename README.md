@@ -12,6 +12,43 @@ Prototype features:
 - Processes screen (`P`) for stdout/stderr/log viewing + killing spawned agents
 - Auto-rescans when the sessions directory changes (file watcher)
 
+## Screenshots
+
+### Projects
+
+![Projects screen showing local session-log projects with live “online” indicators and type-to-filter search.](assets/projects.png)
+
+What’s happening / features:
+- Browse all discovered projects under your sessions directory.
+- Type to filter; `Esc` clears.
+- `●` indicates a recently modified (“online”) project.
+
+### Sessions
+
+![Sessions screen showing a project’s sessions list with navigation, quick “result” access, and delete controls.](assets/sessions.png)
+
+What’s happening / features:
+- Browse sessions for the selected project and open them with `Enter`.
+- `Space` jumps to the newest “last Out” result.
+- Delete logs with `Del`/`Backspace` (with confirmation).
+
+### Session Detail (timeline)
+
+![Session Detail timeline screen showing chronological events with expandable details and context window controls.](assets/timeline.png)
+
+What’s happening / features:
+- Timeline view of the session: messages, outputs, and other events in order.
+- `Enter` toggles expanded details; `c` adjusts the visible context window.
+- `o` copies/opens the last “Out” result quickly.
+
+### New Session
+
+![New Session prompt editor screen showing a multi-line prompt with engine switching and send controls.](assets/new-session.png)
+
+What’s happening / features:
+- Paste/edit a prompt, then spawn Codex/Claude in the background.
+- `Shift+Tab` switches engine; `Ctrl+Enter`/`Cmd+Enter` sends.
+
 ## Roadmap
 
 1. Manage spawned sessions (processes) and their lifecycle.
