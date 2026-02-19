@@ -99,16 +99,21 @@ cargo run -- sessions "/path/to/project"
 cargo run -- history                      # defaults to latest session in current folder project
 cargo run -- history "/path/to/session.jsonl"
 cargo run -- history "/path/to/session.jsonl" --full
+cargo run -- sessions --limit 50 --offset 0 --size
+cargo run -- history --limit 200 --offset 0 --full --size
+cargo run -- update
 ```
 
 CLI details:
 - Auto-selects the project for the current folder (or nearest parent) when `project-path` is omitted.
+- Pagination: `sessions` and `history` default to `--limit 10`; use `--limit N` and `--offset N`.
 - `projects` output: `project_name<TAB>project_path<TAB>session_count`
-- `sessions` output: `started_at_rfc3339<TAB>session_id<TAB>title<TAB>log_path` (newest-first)
+- `sessions` output: `started_at_rfc3339<TAB>session_id<TAB>title<TAB>log_path` (newest-first; `--size` adds `file_size_bytes` before `log_path`)
 - `history` accepts a session `.jsonl` path or a **project directory**; if a directory is provided it selects that project’s latest session.
-- `history` prints a readable timeline; `--full` includes long details (tool calls/outputs, full messages).
+- `history` prints a readable timeline; `--full` includes long details (tool calls/outputs, full messages); `--size` prints stats to stderr.
 - Pipe-friendly output (handles broken pipes like `ccbox history | head`).
 - Parse warnings and “truncated” notices are printed to stderr.
+- On TUI start, `ccbox` checks for a newer GitHub Release in the background and shows a hint if one is available.
 
 Optional overrides:
 - `CODEX_SESSIONS_DIR` (defaults to `~/.codex/sessions`; Windows: `%USERPROFILE%\\.codex\\sessions`)

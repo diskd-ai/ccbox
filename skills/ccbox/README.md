@@ -43,6 +43,8 @@ ccbox projects
 ccbox sessions
 ccbox history
 ccbox history --full
+ccbox sessions --limit 50 --offset 0 --size
+ccbox history --limit 200 --offset 0 --full --size
 ```
 
 ---

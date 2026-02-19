@@ -27,7 +27,7 @@ use ratatui::backend::CrosstermBackend;
 use std::io::{self, Stdout, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{Sender, channel};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
@@ -38,6 +38,11 @@ enum MainError {
 
     #[error(transparent)]
     Cli(#[from] crate::cli::CliRunError),
+}
+
+#[derive(Clone, Debug)]
+enum UpdateSignal {
+    UpdateAvailable { latest_tag: String },
 }
 
 fn main() {
@@ -82,7 +87,7 @@ fn run_main() -> Result<(), MainError> {
 
 fn print_help() {
     let text = format!(
-        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}                          Start the TUI\n  {name} projects                 List projects\n  {name} sessions [project-path]  List sessions (defaults to current folder)\n  {name} history [log-or-project-path] [--full]\n                               Print history (defaults to latest session in current folder; accepts a project directory)\n  {name} --help\n  {name} --version\n\nENV:\n  CODEX_SESSIONS_DIR  Override the sessions directory (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n",
+        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}                          Start the TUI\n  {name} projects                 List discovered projects\n  {name} sessions [project-path]  List sessions (defaults to current folder)\n  {name} history [log|project]    Print timeline (defaults to latest for current folder)\n  {name} update                   Self-update from GitHub Releases (macOS/Linux)\n  {name} --help | --version\n\nSESSIONS FLAGS:\n  --limit N   Max sessions to print (default: 10)\n  --offset N  Skip first N sessions (default: 0)\n  --size      Include file size bytes column\n\nHISTORY FLAGS:\n  --limit N   Max timeline items to print (default: 10)\n  --offset N  Skip first N timeline items (default: 0)\n  --full      Include full details (tool outputs, long messages)\n  --size      Print stats to stderr (bytes + item counts)\n\nOUTPUT:\n  projects: project_name<TAB>project_path<TAB>session_count\n  sessions: started_at<TAB>session_id<TAB>title<TAB>log_path  (with --size adds file_size_bytes before log_path)\n\nENV:\n  CODEX_SESSIONS_DIR  Override sessions dir (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n",
         name = env!("CARGO_PKG_NAME")
     );
     let mut out = io::stdout().lock();
@@ -138,6 +143,9 @@ fn run(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     model: &mut AppModel,
 ) -> Result<(), app::AppError> {
+    let (update_tx, update_rx) = channel::<UpdateSignal>();
+    spawn_update_check(update_tx);
+
     let watcher = match watch_sessions_dir(&model.data.sessions_dir) {
         Ok(watcher) => Some(watcher),
         Err(error) => {
@@ -164,6 +172,17 @@ fn run(
     };
 
     loop {
+        while let Ok(signal) = update_rx.try_recv() {
+            match signal {
+                UpdateSignal::UpdateAvailable { latest_tag } => {
+                    model.update_hint = Some(format!(
+                        "Update available: v{} -> {latest_tag}. Run `ccbox update`.",
+                        env!("CARGO_PKG_VERSION")
+                    ));
+                }
+            }
+        }
+
         if let Some(watcher) = &watcher {
             while let Some(signal) = watcher.try_recv() {
                 match signal {
@@ -462,6 +481,18 @@ fn run(
             }
         }
     }
+}
+
+fn spawn_update_check(tx: Sender<UpdateSignal>) {
+    std::thread::spawn(move || {
+        let current = env!("CARGO_PKG_VERSION");
+        let Ok(Some(update)) = crate::infra::check_for_update(current) else {
+            return;
+        };
+        let _ = tx.send(UpdateSignal::UpdateAvailable {
+            latest_tag: update.latest_tag,
+        });
+    });
 }
 
 fn apply_process_signal(model: &mut AppModel, signal: ProcessSignal) {

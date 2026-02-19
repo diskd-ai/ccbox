@@ -5,6 +5,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+const DEFAULT_LIMIT: usize = 10;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CliInvocation {
     PrintHelp,
@@ -18,11 +20,18 @@ pub enum CliCommand {
     Projects,
     Sessions {
         project_path: Option<PathBuf>,
+        offset: usize,
+        limit: usize,
+        size: bool,
     },
     History {
         log_path: Option<PathBuf>,
+        offset: usize,
+        limit: usize,
         full: bool,
+        size: bool,
     },
+    Update,
 }
 
 #[derive(Debug, Error)]
@@ -32,6 +41,12 @@ pub enum CliParseError {
 
     #[error("unknown flag: {0}")]
     UnknownFlag(String),
+
+    #[error("missing value for flag: {0}")]
+    MissingFlagValue(String),
+
+    #[error("invalid value for {flag}: {value}")]
+    InvalidFlagValue { flag: String, value: String },
 
     #[error("unexpected argument: {0}")]
     UnexpectedArgument(String),
@@ -63,42 +78,104 @@ pub fn parse_invocation(args: &[String]) -> Result<CliInvocation, CliParseError>
         }
         "sessions" => {
             let mut project_path: Option<PathBuf> = None;
-            for arg in iter {
-                if arg.starts_with('-') {
-                    return Err(CliParseError::UnknownFlag(arg.to_string()));
+            let mut offset = 0usize;
+            let mut limit = DEFAULT_LIMIT;
+            let mut size = false;
+
+            let mut args = iter.peekable();
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--limit" | "-l" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--limit".to_string())
+                        })?;
+                        limit = parse_usize_flag("--limit", value)?;
+                    }
+                    "--offset" | "-o" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--offset".to_string())
+                        })?;
+                        offset = parse_usize_flag("--offset", value)?;
+                    }
+                    "--size" => {
+                        size = true;
+                    }
+                    _ if arg.starts_with('-') => {
+                        return Err(CliParseError::UnknownFlag(arg.to_string()));
+                    }
+                    _ => {
+                        if project_path.is_some() {
+                            return Err(CliParseError::UnexpectedArgument(arg.to_string()));
+                        }
+                        project_path = Some(PathBuf::from(arg));
+                    }
                 }
-                if project_path.is_some() {
-                    return Err(CliParseError::UnexpectedArgument(arg.to_string()));
-                }
-                project_path = Some(PathBuf::from(arg));
             }
 
             Ok(CliInvocation::Command(CliCommand::Sessions {
                 project_path,
+                offset,
+                limit,
+                size,
             }))
         }
         "history" => {
             let mut full = false;
+            let mut size = false;
+            let mut offset = 0usize;
+            let mut limit = DEFAULT_LIMIT;
             let mut log_path: Option<PathBuf> = None;
 
-            for arg in iter {
-                if arg == "--full" {
-                    full = true;
-                    continue;
+            let mut args = iter.peekable();
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--full" => {
+                        full = true;
+                    }
+                    "--limit" | "-l" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--limit".to_string())
+                        })?;
+                        limit = parse_usize_flag("--limit", value)?;
+                    }
+                    "--offset" | "-o" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--offset".to_string())
+                        })?;
+                        offset = parse_usize_flag("--offset", value)?;
+                    }
+                    "--size" => {
+                        size = true;
+                    }
+                    _ if arg.starts_with('-') => {
+                        return Err(CliParseError::UnknownFlag(arg.to_string()));
+                    }
+                    _ => {
+                        if log_path.is_some() {
+                            return Err(CliParseError::UnexpectedArgument(arg.to_string()));
+                        }
+                        log_path = Some(PathBuf::from(arg));
+                    }
                 }
-                if arg.starts_with('-') {
-                    return Err(CliParseError::UnknownFlag(arg.to_string()));
-                }
-                if log_path.is_some() {
-                    return Err(CliParseError::UnexpectedArgument(arg.to_string()));
-                }
-                log_path = Some(PathBuf::from(arg));
             }
 
             Ok(CliInvocation::Command(CliCommand::History {
                 log_path,
+                offset,
+                limit,
                 full,
+                size,
             }))
+        }
+        "update" => {
+            let rest = iter.collect::<Vec<_>>();
+            if let Some(arg) = rest.first() {
+                if arg.starts_with('-') {
+                    return Err(CliParseError::UnknownFlag((*arg).to_string()));
+                }
+                return Err(CliParseError::UnexpectedArgument((*arg).to_string()));
+            }
+            Ok(CliInvocation::Command(CliCommand::Update))
         }
         other => Err(CliParseError::UnknownSubcommand(other.to_string())),
     }
@@ -120,6 +197,9 @@ pub enum CliRunError {
 
     #[error("project has no sessions: {0}")]
     ProjectHasNoSessions(String),
+
+    #[error(transparent)]
+    Update(#[from] crate::infra::UpdateError),
 
     #[error(transparent)]
     WriteOutput(#[from] io::Error),
@@ -153,18 +233,34 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
             }
             Ok(())
         }
-        CliCommand::Sessions { project_path } => {
+        CliCommand::Sessions {
+            project_path,
+            offset,
+            limit,
+            size,
+        } => {
             let (projects, warnings) = load_projects(sessions_dir)?;
             let project = select_project(projects, project_path)?;
 
-            for session in project.sessions {
-                let line = format!(
-                    "{}\t{}\t{}\t{}",
-                    session.meta.started_at_rfc3339,
-                    session.meta.id,
-                    session.title,
-                    session.log_path.display(),
-                );
+            for session in project.sessions.iter().skip(offset).take(limit) {
+                let line = if size {
+                    format!(
+                        "{}\t{}\t{}\t{}\t{}",
+                        session.meta.started_at_rfc3339,
+                        session.meta.id,
+                        session.title,
+                        session.file_size_bytes,
+                        session.log_path.display(),
+                    )
+                } else {
+                    format!(
+                        "{}\t{}\t{}\t{}",
+                        session.meta.started_at_rfc3339,
+                        session.meta.id,
+                        session.title,
+                        session.log_path.display(),
+                    )
+                };
                 if !write_line(&mut out, &line)? {
                     return Ok(());
                 }
@@ -174,7 +270,13 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
             }
             Ok(())
         }
-        CliCommand::History { log_path, full } => {
+        CliCommand::History {
+            log_path,
+            offset,
+            limit,
+            full,
+            size,
+        } => {
             let log_path = match log_path {
                 Some(path) if fs::metadata(&path).is_ok_and(|meta| meta.is_dir()) => {
                     let (projects, warnings) = load_projects(sessions_dir)?;
@@ -211,9 +313,24 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
                 }
             };
 
+            let file_size_bytes = fs::metadata(&log_path).ok().map(|meta| meta.len());
             let timeline = load_session_timeline(&log_path)?;
-            for item in timeline.items {
-                if !print_timeline_item(&mut out, &item, full)? {
+            let total_items = timeline.items.len();
+            let mut printed = 0usize;
+            for item in timeline.items.iter().skip(offset).take(limit) {
+                printed = printed.saturating_add(1);
+                if !print_timeline_item(&mut out, item, full)? {
+                    return Ok(());
+                }
+            }
+            if size {
+                let bytes = file_size_bytes
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                let line = format!(
+                    "stats:\tbytes={bytes}\titems_total={total_items}\titems_printed={printed}\toffset={offset}\tlimit={limit}"
+                );
+                if !write_line(&mut err, &line)? {
                     return Ok(());
                 }
             }
@@ -227,6 +344,22 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
             }
             Ok(())
         }
+        CliCommand::Update => match crate::infra::self_update()? {
+                Some(update) => {
+                    let line = format!(
+                        "updated:\tv{}\t->\t{}",
+                        update.current,
+                        update.latest_tag
+                    );
+                    write_line(&mut out, &line)?;
+                    Ok(())
+                }
+            None => {
+                let line = format!("up-to-date:\tv{}", env!("CARGO_PKG_VERSION"));
+                write_line(&mut out, &line)?;
+                Ok(())
+            }
+        },
     }
 }
 
@@ -361,6 +494,15 @@ fn write_line(out: &mut impl Write, line: &str) -> io::Result<bool> {
     }
 }
 
+fn parse_usize_flag(flag: &str, value: &str) -> Result<usize, CliParseError> {
+    value
+        .parse::<usize>()
+        .map_err(|_| CliParseError::InvalidFlagValue {
+            flag: flag.to_string(),
+            value: value.to_string(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,7 +534,12 @@ mod tests {
         let parsed = parse_invocation(&args(&["ccbox", "sessions"])).expect("parse");
         assert_eq!(
             parsed,
-            CliInvocation::Command(CliCommand::Sessions { project_path: None })
+            CliInvocation::Command(CliCommand::Sessions {
+                project_path: None,
+                offset: 0,
+                limit: DEFAULT_LIMIT,
+                size: false
+            })
         );
     }
 
@@ -404,7 +551,10 @@ mod tests {
             parsed,
             CliInvocation::Command(CliCommand::History {
                 log_path: Some(PathBuf::from("/tmp/session.jsonl")),
-                full: true
+                offset: 0,
+                limit: DEFAULT_LIMIT,
+                full: true,
+                size: false
             })
         );
     }
@@ -416,7 +566,45 @@ mod tests {
             parsed,
             CliInvocation::Command(CliCommand::History {
                 log_path: None,
-                full: false
+                offset: 0,
+                limit: DEFAULT_LIMIT,
+                full: false,
+                size: false
+            })
+        );
+    }
+
+    #[test]
+    fn parse_sessions_supports_limit_offset_and_size_flags() {
+        let parsed = parse_invocation(&args(&[
+            "ccbox", "sessions", "--limit", "25", "--offset", "5", "--size",
+        ]))
+        .expect("parse");
+        assert_eq!(
+            parsed,
+            CliInvocation::Command(CliCommand::Sessions {
+                project_path: None,
+                offset: 5,
+                limit: 25,
+                size: true
+            })
+        );
+    }
+
+    #[test]
+    fn parse_history_supports_limit_offset_and_size_flags() {
+        let parsed = parse_invocation(&args(&[
+            "ccbox", "history", "--limit", "25", "--offset", "5", "--size",
+        ]))
+        .expect("parse");
+        assert_eq!(
+            parsed,
+            CliInvocation::Command(CliCommand::History {
+                log_path: None,
+                offset: 5,
+                limit: 25,
+                full: false,
+                size: true
             })
         );
     }

@@ -19,6 +19,7 @@ ccbox projects
 
 ```bash
 ccbox sessions
+ccbox sessions --limit 50 --offset 0 --size
 ```
 
 - Inspect the latest session for the current folder:
@@ -26,6 +27,7 @@ ccbox sessions
 ```bash
 ccbox history
 ccbox history --full
+ccbox history --limit 200 --offset 0 --full --size
 ```
 
 - Inspect a specific project or log file:

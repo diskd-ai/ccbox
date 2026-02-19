@@ -162,6 +162,7 @@ fn render_projects(
     let footer = projects_footer_line(
         model.data.warnings.get(),
         model.notice.as_deref(),
+        model.update_hint.as_deref(),
         processes_running(model),
     );
     frame.render_widget(footer, chunks[2]);
@@ -216,6 +217,7 @@ fn render_sessions(
             sessions_footer_line(
                 model.data.warnings.get(),
                 model.notice.as_deref(),
+                model.update_hint.as_deref(),
                 processes_running(model),
             ),
             chunks[2],
@@ -259,6 +261,7 @@ fn render_sessions(
         sessions_footer_line(
             model.data.warnings.get(),
             model.notice.as_deref(),
+            model.update_hint.as_deref(),
             processes_running(model),
         ),
         chunks[2],
@@ -378,6 +381,11 @@ fn render_new_session(
             spans.push(Span::raw(format!("  ·  {notice}")));
         }
     }
+    if let Some(hint) = model.update_hint.as_deref() {
+        if !hint.trim().is_empty() {
+            spans.push(Span::raw(format!("  ·  {hint}")));
+        }
+    }
     spans.push(Span::raw("  ·  "));
     spans.push(Span::styled(
         format!("Engine: {}", new_session_view.engine.label()),
@@ -478,6 +486,7 @@ fn render_processes(
         footer_paragraph(
             footer_text.to_string(),
             model.notice.as_deref(),
+            model.update_hint.as_deref(),
             processes_running(model),
         ),
         chunks[2],
@@ -552,6 +561,7 @@ fn render_process_output(
         footer_paragraph(
             footer_text.to_string(),
             model.notice.as_deref(),
+            model.update_hint.as_deref(),
             processes_running(model),
         ),
         chunks[2],
@@ -561,6 +571,7 @@ fn render_process_output(
 fn projects_footer_line(
     warnings: usize,
     notice: Option<&str>,
+    update_hint: Option<&str>,
     processes_running: bool,
 ) -> Paragraph<'static> {
     let text = if warnings == 0 {
@@ -571,12 +582,13 @@ fn projects_footer_line(
             "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Space=result  Del=delete  Esc=clear  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
         )
     };
-    footer_paragraph(text, notice, processes_running)
+    footer_paragraph(text, notice, update_hint, processes_running)
 }
 
 fn sessions_footer_line(
     warnings: usize,
     notice: Option<&str>,
+    update_hint: Option<&str>,
     processes_running: bool,
 ) -> Paragraph<'static> {
     let text = if warnings == 0 {
@@ -587,23 +599,31 @@ fn sessions_footer_line(
             "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Space=result  n=new  Del/Backspace=delete  Esc=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
         )
     };
-    footer_paragraph(text, notice, processes_running)
+    footer_paragraph(text, notice, update_hint, processes_running)
 }
 
-fn footer_with_notice(base: String, notice: Option<&str>) -> String {
-    match notice {
-        Some(message) if !message.trim().is_empty() => format!("{base}  ·  {message}"),
-        _ => base,
+fn footer_with_notices(mut base: String, notices: [Option<&str>; 2]) -> String {
+    for notice in notices {
+        let Some(message) = notice else {
+            continue;
+        };
+        if message.trim().is_empty() {
+            continue;
+        }
+        base.push_str("  ·  ");
+        base.push_str(message);
     }
+    base
 }
 
 fn footer_paragraph(
     base: String,
     notice: Option<&str>,
+    update_hint: Option<&str>,
     processes_running: bool,
 ) -> Paragraph<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    spans.push(Span::raw(footer_with_notice(base, notice)));
+    spans.push(Span::raw(footer_with_notices(base, [notice, update_hint])));
     if processes_running {
         spans.push(Span::raw("  ·  "));
         spans.push(Span::styled(
@@ -1164,6 +1184,7 @@ fn render_session_detail(
         detail_view.items.len(),
         detail_view.truncated,
         model.notice.as_deref(),
+        model.update_hint.as_deref(),
         processes_running(model),
     );
     frame.render_widget(footer, chunks[2]);
@@ -1183,6 +1204,7 @@ fn session_detail_footer_line(
     item_count: usize,
     truncated: bool,
     notice: Option<&str>,
+    update_hint: Option<&str>,
     processes_running: bool,
 ) -> Paragraph<'static> {
     let mut parts = vec![
@@ -1199,7 +1221,7 @@ fn session_detail_footer_line(
         parts.push(format!("parse warnings: {detail_warnings}"));
     }
     let base = parts.join("  ·  ");
-    footer_paragraph(base, notice, processes_running)
+    footer_paragraph(base, notice, update_hint, processes_running)
 }
 
 fn kind_label(kind: TimelineItemKind) -> &'static str {
