@@ -7,6 +7,7 @@ All notable user-facing changes to `ccbox` are documented in this file.
 ### Changes
 
 - TUI: show update-available hint in green.
+- Docs: move roadmap to `ROADMAP.md`.
 
 ## [0.1.4] - 2026-02-19
 
