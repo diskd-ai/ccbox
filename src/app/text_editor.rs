@@ -54,7 +54,8 @@ impl TextEditor {
         }
         new_lines.push(format!("{}{}", parts[parts.len() - 1], after));
 
-        self.lines.splice(self.cursor_row..=self.cursor_row, new_lines);
+        self.lines
+            .splice(self.cursor_row..=self.cursor_row, new_lines);
         self.cursor_row += parts.len() - 1;
         self.cursor_col = parts[parts.len() - 1].chars().count();
     }
@@ -218,7 +219,10 @@ fn normalize_newlines(input: &str) -> String {
 
 fn split_at_char_index(input: &str, char_index: usize) -> (String, String) {
     let byte_index = char_to_byte_index(input, char_index);
-    (input[..byte_index].to_string(), input[byte_index..].to_string())
+    (
+        input[..byte_index].to_string(),
+        input[byte_index..].to_string(),
+    )
 }
 
 fn char_to_byte_index(input: &str, char_index: usize) -> usize {
@@ -231,4 +235,3 @@ fn char_to_byte_index(input: &str, char_index: usize) -> usize {
         .map(|(index, _)| index)
         .unwrap_or_else(|| input.len())
 }
-

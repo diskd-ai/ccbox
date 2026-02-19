@@ -89,11 +89,30 @@ What’s happening / features:
 cargo run
 ```
 
+CLI mode (no TUI):
+
+```bash
+cargo run -- projects
+cargo run -- sessions                     # defaults to current folder (or a parent folder) project
+cargo run -- sessions "/path/to/project"
+cargo run -- history                      # defaults to latest session in current folder project
+cargo run -- history "/path/to/session.jsonl"
+cargo run -- history "/path/to/session.jsonl" --full
+```
+
 Optional overrides:
 - `CODEX_SESSIONS_DIR` (defaults to `~/.codex/sessions`; Windows: `%USERPROFILE%\\.codex\\sessions`)
 
 Notes:
 - Spawning sessions requires `codex` on your `$PATH` (and `claude` if you switch engines).
+
+## Skill (skills.sh)
+
+Install the `ccbox` skill for agents:
+
+```bash
+npx skills add diskd-ai/ccbox --skill ccbox --global --yes
+```
 
 ## Keybindings (prototype)
 

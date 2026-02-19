@@ -16,7 +16,9 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
     match &model.view {
         View::Projects(projects_view) => render_projects(frame, area, model, projects_view),
         View::Sessions(sessions_view) => render_sessions(frame, area, model, sessions_view),
-        View::NewSession(new_session_view) => render_new_session(frame, area, model, new_session_view),
+        View::NewSession(new_session_view) => {
+            render_new_session(frame, area, model, new_session_view)
+        }
         View::SessionDetail(detail_view) => render_session_detail(frame, area, model, detail_view),
         View::Processes(processes_view) => render_processes(frame, area, model, processes_view),
         View::ProcessOutput(output_view) => render_process_output(frame, area, model, output_view),
@@ -128,11 +130,9 @@ fn render_projects(
             .iter()
             .copied()
             .filter_map(|project_index| {
-                projects
-                    .get(project_index)
-                    .map(|project| {
-                        project_list_item(project, max_width, sessions_col_width, modified_col_width)
-                    })
+                projects.get(project_index).map(|project| {
+                    project_list_item(project, max_width, sessions_col_width, modified_col_width)
+                })
             })
             .collect();
 
@@ -332,8 +332,7 @@ fn render_new_session(
             }
         }
 
-        if new_session_view.editor.lines.len() == 1 && new_session_view.editor.lines[0].is_empty()
-        {
+        if new_session_view.editor.lines.len() == 1 && new_session_view.editor.lines[0].is_empty() {
             lines.clear();
             lines.push(Line::from(Span::styled(
                 "Type or paste a prompt…",
@@ -358,22 +357,20 @@ fn render_new_session(
                 if idx >= cursor_col {
                     break;
                 }
-                x_offset = x_offset.saturating_add(
-                    UnicodeWidthChar::width(ch).unwrap_or(0) as u16,
-                );
+                x_offset = x_offset.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(0) as u16);
             }
 
-            let x = editor_inner
-                .x
-                .saturating_add(x_offset)
-                .min(editor_inner.x.saturating_add(editor_inner.width.saturating_sub(1)));
+            let x = editor_inner.x.saturating_add(x_offset).min(
+                editor_inner
+                    .x
+                    .saturating_add(editor_inner.width.saturating_sub(1)),
+            );
             let y = editor_inner.y.saturating_add(cursor_y as u16);
             frame.set_cursor_position(Position { x, y });
         }
     }
 
-    let footer_text =
-        "Keys: edit text  Ctrl+Enter/Cmd+Enter=send  Esc=cancel  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help";
+    let footer_text = "Keys: edit text  Ctrl+Enter/Cmd+Enter=send  Esc=cancel  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help";
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(footer_text.to_string()));
     if let Some(notice) = model.notice.as_deref() {
@@ -384,7 +381,9 @@ fn render_new_session(
     spans.push(Span::raw("  ·  "));
     spans.push(Span::styled(
         format!("Engine: {}", new_session_view.engine.label()),
-        Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
     ));
     spans.push(Span::styled(
         " (Shift+Tab)".to_string(),
@@ -447,9 +446,7 @@ fn render_processes(
     let items: Vec<ListItem> = model
         .processes
         .iter()
-        .map(|process| {
-            process_list_item(process, max_width, status_col_width, started_col_width)
-        })
+        .map(|process| process_list_item(process, max_width, status_col_width, started_col_width))
         .collect();
 
     let list = List::new(items)
@@ -550,8 +547,7 @@ fn render_process_output(
         );
     frame.render_widget(body, chunks[1]);
 
-    let footer_text =
-        "Keys: arrows=scroll  s=stdout  e=stderr  l=log  k=kill  Esc/Backspace=back  Ctrl+Q/Ctrl+C=quit  F1/?=help";
+    let footer_text = "Keys: arrows=scroll  s=stdout  e=stderr  l=log  k=kill  Esc/Backspace=back  Ctrl+Q/Ctrl+C=quit  F1/?=help";
     frame.render_widget(
         footer_paragraph(
             footer_text.to_string(),
@@ -601,7 +597,11 @@ fn footer_with_notice(base: String, notice: Option<&str>) -> String {
     }
 }
 
-fn footer_paragraph(base: String, notice: Option<&str>, processes_running: bool) -> Paragraph<'static> {
+fn footer_paragraph(
+    base: String,
+    notice: Option<&str>,
+    processes_running: bool,
+) -> Paragraph<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(footer_with_notice(base, notice)));
     if processes_running {
@@ -726,7 +726,10 @@ fn process_list_item(
     }
 
     let status = pad_left(&process.status.label(), status_col_width);
-    let started = pad_left(&relative_time_ago(Some(process.started_at)), started_col_width);
+    let started = pad_left(
+        &relative_time_ago(Some(process.started_at)),
+        started_col_width,
+    );
 
     let column_sep = "  ·  ";
     let right_width = status_col_width + UnicodeWidthStr::width(column_sep) + started_col_width;
@@ -806,8 +809,7 @@ fn project_list_item(
     let modified = pad_left(&modified, modified_col_width);
 
     let column_sep = "  ·  ";
-    let right_width =
-        sessions_col_width + UnicodeWidthStr::width(column_sep) + modified_col_width;
+    let right_width = sessions_col_width + UnicodeWidthStr::width(column_sep) + modified_col_width;
 
     let min_left = 8usize;
     let gap = 2usize;
@@ -867,7 +869,10 @@ fn project_list_item(
         sessions_col,
         Style::default().fg(Color::DarkGray),
     ));
-    spans.push(Span::styled(column_sep, Style::default().fg(Color::DarkGray)));
+    spans.push(Span::styled(
+        column_sep,
+        Style::default().fg(Color::DarkGray),
+    ));
     spans.push(Span::styled(modified, Style::default().fg(Color::DarkGray)));
 
     ListItem::new(Line::from(spans))
@@ -1213,7 +1218,9 @@ fn kind_label(kind: TimelineItemKind) -> &'static str {
 fn kind_style(kind: TimelineItemKind) -> Style {
     match kind {
         TimelineItemKind::Turn => Style::default().fg(Color::DarkGray),
-        TimelineItemKind::User => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        TimelineItemKind::User => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
         TimelineItemKind::Assistant => Style::default().fg(Color::Green),
         TimelineItemKind::Thinking => Style::default().fg(Color::Magenta),
         TimelineItemKind::ToolCall => Style::default().fg(Color::LightBlue),
@@ -1236,9 +1243,12 @@ struct TimelineRenderColumns {
     rows: Vec<TimelineRowColumns>,
 }
 
-fn build_timeline_render_columns(items: &[TimelineItem], session_start_rfc3339: &str) -> TimelineRenderColumns {
-    let session_start_ms = parse_rfc3339_to_unix_ms(session_start_rfc3339)
-        .or_else(|| earliest_timestamp_ms(items));
+fn build_timeline_render_columns(
+    items: &[TimelineItem],
+    session_start_rfc3339: &str,
+) -> TimelineRenderColumns {
+    let session_start_ms =
+        parse_rfc3339_to_unix_ms(session_start_rfc3339).or_else(|| earliest_timestamp_ms(items));
 
     let mut tool_out_by_call_id: HashMap<String, i64> = HashMap::new();
     for item in items {
@@ -1308,10 +1318,7 @@ fn build_timeline_render_columns(items: &[TimelineItem], session_start_rfc3339: 
 }
 
 fn earliest_timestamp_ms(items: &[TimelineItem]) -> Option<i64> {
-    items
-        .iter()
-        .filter_map(|item| item.timestamp_ms)
-        .min()
+    items.iter().filter_map(|item| item.timestamp_ms).min()
 }
 
 fn parse_rfc3339_to_unix_ms(value: &str) -> Option<i64> {
@@ -1381,8 +1388,7 @@ fn timeline_list_item(
     let label_width = UnicodeWidthStr::width(label.as_str());
 
     let column_sep = "  ·  ";
-    let right_width =
-        offset_col_width + UnicodeWidthStr::width(column_sep) + duration_col_width;
+    let right_width = offset_col_width + UnicodeWidthStr::width(column_sep) + duration_col_width;
 
     let left_prefix_width = label_width + UnicodeWidthStr::width("  ");
     let min_left = left_prefix_width.saturating_add(4);
@@ -1462,7 +1468,11 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
     }
     text.lines.push(Line::from(""));
 
-    let max = if detail_view.show_details { 12_000 } else { 600 };
+    let max = if detail_view.show_details {
+        12_000
+    } else {
+        600
+    };
 
     if item.kind == TimelineItemKind::ToolCall {
         if let Some(call_id) = item.call_id.as_deref() {
@@ -1474,8 +1484,9 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
                         .fg(Color::LightBlue)
                         .add_modifier(Modifier::BOLD),
                 )));
-                text.lines
-                    .extend(render_plain_highlight_lines(truncate_chars(&tool_out.detail, max).as_str()));
+                text.lines.extend(render_plain_highlight_lines(
+                    truncate_chars(&tool_out.detail, max).as_str(),
+                ));
                 text.lines.push(Line::from(""));
                 text.lines.push(Line::from(Span::styled(
                     "Input:",
@@ -1483,8 +1494,9 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
                         .fg(Color::LightBlue)
                         .add_modifier(Modifier::BOLD),
                 )));
-                text.lines
-                    .extend(render_plain_highlight_lines(truncate_chars(&item.detail, max).as_str()));
+                text.lines.extend(render_plain_highlight_lines(
+                    truncate_chars(&item.detail, max).as_str(),
+                ));
                 if !detail_view.show_details {
                     text.lines.push(Line::from(""));
                     text.lines.push(Line::from(Span::styled(
@@ -1587,10 +1599,7 @@ fn render_markdownish_lines(text: &str) -> Vec<Line<'static>> {
         }
 
         let indent_len = raw_line.len().saturating_sub(trimmed.len());
-        let indent = raw_line
-            .get(0..indent_len)
-            .unwrap_or("")
-            .to_string();
+        let indent = raw_line.get(0..indent_len).unwrap_or("").to_string();
 
         if let Some((level, heading_text)) = parse_markdown_heading(trimmed) {
             let style = match level {
@@ -1598,7 +1607,9 @@ fn render_markdownish_lines(text: &str) -> Vec<Line<'static>> {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
                     .add_modifier(Modifier::UNDERLINED),
-                2 => Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                2 => Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
                 _ => Style::default()
                     .fg(Color::LightYellow)
                     .add_modifier(Modifier::BOLD),
@@ -1624,7 +1635,11 @@ fn render_markdownish_lines(text: &str) -> Vec<Line<'static>> {
             continue;
         }
 
-        if let Some(list_text) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")).or_else(|| trimmed.strip_prefix("+ ")) {
+        if let Some(list_text) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "))
+        {
             let mut spans = Vec::new();
             if !indent.is_empty() {
                 spans.push(Span::raw(indent));
@@ -1853,9 +1868,7 @@ fn render_json_highlight_lines(text: &str) -> Vec<Line<'static>> {
                 let mut token = String::new();
                 token.push(ch);
                 while let Some(next) = iter.peek().copied() {
-                    if next.is_ascii_digit()
-                        || matches!(next, '.' | 'e' | 'E' | '+' | '-')
-                    {
+                    if next.is_ascii_digit() || matches!(next, '.' | 'e' | 'E' | '+' | '-') {
                         token.push(next);
                         let _ = iter.next();
                         continue;
@@ -1909,10 +1922,18 @@ fn render_json_highlight_lines(text: &str) -> Vec<Line<'static>> {
                 push_json_segment(&mut current_segments, JsonStyleKind::Default, "n");
             }
             other if other.is_whitespace() => {
-                push_json_segment(&mut current_segments, JsonStyleKind::Default, &other.to_string());
+                push_json_segment(
+                    &mut current_segments,
+                    JsonStyleKind::Default,
+                    &other.to_string(),
+                );
             }
             other => {
-                push_json_segment(&mut current_segments, JsonStyleKind::Default, &other.to_string());
+                push_json_segment(
+                    &mut current_segments,
+                    JsonStyleKind::Default,
+                    &other.to_string(),
+                );
             }
         }
     }

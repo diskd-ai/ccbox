@@ -171,11 +171,9 @@ impl AppModel {
                     }
                 }
                 View::NewSession(new_session_view) => {
-                    match data
-                        .projects
-                        .iter()
-                        .find(|project| project.project_path == new_session_view.from_sessions.project_path)
-                    {
+                    match data.projects.iter().find(|project| {
+                        project.project_path == new_session_view.from_sessions.project_path
+                    }) {
                         Some(project) => {
                             let mut next_view = new_session_view.clone();
                             if !project.sessions.is_empty() {
@@ -1180,8 +1178,7 @@ fn update_processes(
         KeyCode::PageDown => {
             if !model.processes.is_empty() {
                 let step = page_step_standard_list(model.terminal_size);
-                view.selected =
-                    (view.selected + step).min(model.processes.len().saturating_sub(1));
+                view.selected = (view.selected + step).min(model.processes.len().saturating_sub(1));
             }
         }
         KeyCode::Char('s') | KeyCode::Char('S') => {
@@ -1239,18 +1236,16 @@ fn update_processes(
                 .map(|process| process.id.clone())
             {
                 model.view = View::Processes(view);
-                return (
-                    model,
-                    AppCommand::KillProcess {
-                        process_id,
-                    },
-                );
+                return (model, AppCommand::KillProcess { process_id });
             }
         }
         KeyCode::Enter => {
             if let Some((project_path, session_log_path)) =
                 model.processes.get(view.selected).map(|process| {
-                    (process.project_path.clone(), process.session_log_path.clone())
+                    (
+                        process.project_path.clone(),
+                        process.session_log_path.clone(),
+                    )
                 })
             {
                 if let Some(log_path) = session_log_path {
@@ -1270,9 +1265,7 @@ fn update_processes(
         _ => {}
     }
 
-    view.selected = view
-        .selected
-        .min(model.processes.len().saturating_sub(1));
+    view.selected = view.selected.min(model.processes.len().saturating_sub(1));
     model.view = View::Processes(view);
     (model, AppCommand::None)
 }
@@ -1337,12 +1330,7 @@ fn update_process_output(
         KeyCode::Char('k') | KeyCode::Char('K') => {
             let process_id = view.process_id.clone();
             model.view = View::ProcessOutput(view);
-            return (
-                model,
-                AppCommand::KillProcess {
-                    process_id,
-                },
-            );
+            return (model, AppCommand::KillProcess { process_id });
         }
         _ => {}
     }
@@ -1458,16 +1446,21 @@ fn is_text_input_char(character: char) -> bool {
     !character.is_control()
 }
 
-fn find_tool_output_index(items: &[TimelineItem], selected_index: usize, call_id: &str) -> Option<usize> {
+fn find_tool_output_index(
+    items: &[TimelineItem],
+    selected_index: usize,
+    call_id: &str,
+) -> Option<usize> {
     if selected_index + 1 < items.len() {
-        if let Some((index, _)) = items
-            .iter()
-            .enumerate()
-            .skip(selected_index + 1)
-            .find(|(_, item)| {
-                item.kind == TimelineItemKind::ToolOutput
-                    && item.call_id.as_deref() == Some(call_id)
-            })
+        if let Some((index, _)) =
+            items
+                .iter()
+                .enumerate()
+                .skip(selected_index + 1)
+                .find(|(_, item)| {
+                    item.kind == TimelineItemKind::ToolOutput
+                        && item.call_id.as_deref() == Some(call_id)
+                })
         {
             return Some(index);
         }
@@ -1477,8 +1470,7 @@ fn find_tool_output_index(items: &[TimelineItem], selected_index: usize, call_id
         .iter()
         .enumerate()
         .find(|(_, item)| {
-            item.kind == TimelineItemKind::ToolOutput
-                && item.call_id.as_deref() == Some(call_id)
+            item.kind == TimelineItemKind::ToolOutput && item.call_id.as_deref() == Some(call_id)
         })
         .map(|(index, _)| index)
 }

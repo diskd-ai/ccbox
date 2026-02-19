@@ -1,15 +1,17 @@
 mod app;
+mod cli;
 mod domain;
 mod infra;
 mod ui;
 
-use crate::app::{AppCommand, AppEvent, AppModel};
 use crate::app::ProcessOutputKind;
+use crate::app::{AppCommand, AppEvent, AppModel};
+use crate::cli::CliInvocation;
 use crate::domain::{make_session_summary, parse_session_meta_line};
 use crate::infra::{
-    KillProcessError, ProcessExit, ProcessManager, ProcessSignal, WatchSignal,
-    delete_session_logs, load_last_assistant_output, load_session_timeline, read_from_offset,
-    read_tail, resolve_sessions_dir, scan_sessions_dir, watch_sessions_dir,
+    KillProcessError, ProcessExit, ProcessManager, ProcessSignal, WatchSignal, delete_session_logs,
+    load_last_assistant_output, load_session_timeline, read_from_offset, read_tail,
+    resolve_sessions_dir, scan_sessions_dir, watch_sessions_dir,
 };
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyboardEnhancementFlags,
@@ -22,22 +24,72 @@ use crossterm::terminal::{
 use crossterm::{ExecutableCommand, execute};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::path::PathBuf;
-use std::sync::mpsc::channel;
 use std::sync::Arc;
+use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
+use thiserror::Error;
 
-fn main() -> Result<(), app::AppError> {
-    if should_print_help() {
-        print_help();
-        return Ok(());
-    }
-    if should_print_version() {
-        println!("{}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
+#[derive(Debug, Error)]
+enum MainError {
+    #[error(transparent)]
+    App(#[from] crate::app::AppError),
 
+    #[error(transparent)]
+    Cli(#[from] crate::cli::CliRunError),
+}
+
+fn main() {
+    if let Err(error) = run_main() {
+        let mut err = io::stderr().lock();
+        let _ = writeln!(err, "{error}");
+        std::process::exit(1);
+    }
+}
+
+fn run_main() -> Result<(), MainError> {
+    let args = std::env::args().collect::<Vec<_>>();
+    let invocation = match crate::cli::parse_invocation(&args) {
+        Ok(invocation) => invocation,
+        Err(error) => {
+            let mut err = io::stderr().lock();
+            let _ = writeln!(err, "{error}");
+            let _ = writeln!(err);
+            print_help();
+            std::process::exit(2);
+        }
+    };
+
+    match invocation {
+        CliInvocation::PrintHelp => {
+            print_help();
+            Ok(())
+        }
+        CliInvocation::PrintVersion => {
+            let mut out = io::stdout().lock();
+            let _ = writeln!(out, "{}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        CliInvocation::Tui => Ok(run_tui()?),
+        CliInvocation::Command(command) => {
+            let sessions_dir = resolve_sessions_dir().map_err(app::AppError::from)?;
+            crate::cli::run(command, &sessions_dir)?;
+            Ok(())
+        }
+    }
+}
+
+fn print_help() {
+    let text = format!(
+        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}                          Start the TUI\n  {name} projects                 List projects\n  {name} sessions [project-path]  List sessions (defaults to current folder)\n  {name} history [log-path]       Print history (defaults to latest session in current folder; use --full)\n  {name} --help\n  {name} --version\n\nENV:\n  CODEX_SESSIONS_DIR  Override the sessions directory (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n",
+        name = env!("CARGO_PKG_NAME")
+    );
+    let mut out = io::stdout().lock();
+    let _ = write!(out, "{text}");
+}
+
+fn run_tui() -> Result<(), crate::app::AppError> {
     let sessions_dir = resolve_sessions_dir()?;
     let initial_data = match scan_sessions_dir(&sessions_dir) {
         Ok(output) => {
@@ -54,21 +106,6 @@ fn main() -> Result<(), app::AppError> {
     let result = run(&mut terminal, &mut model);
     restore_terminal(&mut terminal)?;
     result
-}
-
-fn should_print_help() -> bool {
-    std::env::args().any(|arg| arg == "--help" || arg == "-h")
-}
-
-fn should_print_version() -> bool {
-    std::env::args().any(|arg| arg == "--version" || arg == "-V")
-}
-
-fn print_help() {
-    println!(
-        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}\n  {name} --help\n  {name} --version\n\nENV:\n  CODEX_SESSIONS_DIR  Override the sessions directory (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n",
-        name = env!("CARGO_PKG_NAME")
-    );
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>, app::AppError> {
@@ -121,9 +158,7 @@ fn run(
     {
         Ok(manager) => Some(manager),
         Err(error) => {
-            *model = model.with_notice(Some(format!(
-                "Process manager disabled: {error}"
-            )));
+            *model = model.with_notice(Some(format!("Process manager disabled: {error}")));
             None
         }
     };
@@ -235,9 +270,9 @@ fn run(
                         AppCommand::OpenSessionResultPreview { session } => {
                             match load_last_assistant_output(&session.log_path) {
                                 Ok(result) => {
-                                    let output = result
-                                        .output
-                                        .unwrap_or_else(|| "(No assistant output found.)".to_string());
+                                    let output = result.output.unwrap_or_else(|| {
+                                        "(No assistant output found.)".to_string()
+                                    });
                                     model.session_result_preview =
                                         Some(crate::app::SessionResultPreviewOverlay {
                                             session_title: session.title,
@@ -281,10 +316,9 @@ fn run(
                                     output.sessions,
                                     output.warnings,
                                 ),
-                                Err(error) => app::AppData::from_load_error(
-                                    sessions_dir,
-                                    error.to_string(),
-                                ),
+                                Err(error) => {
+                                    app::AppData::from_load_error(sessions_dir, error.to_string())
+                                }
                             };
                             *model = model.with_data(new_data);
 
@@ -316,10 +350,9 @@ fn run(
                                     output.sessions,
                                     output.warnings,
                                 ),
-                                Err(error) => app::AppData::from_load_error(
-                                    sessions_dir,
-                                    error.to_string(),
-                                ),
+                                Err(error) => {
+                                    app::AppData::from_load_error(sessions_dir, error.to_string())
+                                }
                             };
                             *model = model.with_data(new_data);
 
@@ -342,9 +375,8 @@ fn run(
                             prompt,
                         } => {
                             let Some(manager) = process_manager.as_mut() else {
-                                *model = model.with_notice(Some(
-                                    "Process spawning is disabled.".to_string(),
-                                ));
+                                *model = model
+                                    .with_notice(Some("Process spawning is disabled.".to_string()));
                                 continue;
                             };
 
@@ -379,8 +411,8 @@ fn run(
                         }
                         AppCommand::KillProcess { process_id } => {
                             let Some(manager) = process_manager.as_mut() else {
-                                *model =
-                                    model.with_notice(Some("Process manager disabled.".to_string()));
+                                *model = model
+                                    .with_notice(Some("Process manager disabled.".to_string()));
                                 continue;
                             };
 
@@ -393,7 +425,8 @@ fn run(
                                     {
                                         process.status = crate::app::ProcessStatus::Killed;
                                     }
-                                    *model = model.with_notice(Some(format!("Killed {process_id}.")));
+                                    *model =
+                                        model.with_notice(Some(format!("Killed {process_id}.")));
                                 }
                                 Err(KillProcessError::NotFound) => {
                                     *model = model.with_notice(Some(format!(
@@ -445,7 +478,10 @@ fn apply_process_signal(model: &mut AppModel, signal: ProcessSignal) {
                 process.session_id = Some(session_id);
             }
         }
-        ProcessSignal::SessionLogPath { process_id, log_path } => {
+        ProcessSignal::SessionLogPath {
+            process_id,
+            log_path,
+        } => {
             if let Some(process) = model
                 .processes
                 .iter_mut()
@@ -516,7 +552,9 @@ fn refresh_process_output_view(model: &mut AppModel) {
         return;
     };
 
-    let Ok((delta, next_offset)) = read_from_offset(&output_view.file_path, output_view.file_offset, 16_384) else {
+    let Ok((delta, next_offset)) =
+        read_from_offset(&output_view.file_path, output_view.file_offset, 16_384)
+    else {
         return;
     };
     if delta.is_empty() {
@@ -580,7 +618,9 @@ fn open_session_detail_by_log_path(model: &mut AppModel, project_path: PathBuf, 
     }
 }
 
-fn build_session_summary_from_log_path(log_path: &std::path::Path) -> Option<crate::domain::SessionSummary> {
+fn build_session_summary_from_log_path(
+    log_path: &std::path::Path,
+) -> Option<crate::domain::SessionSummary> {
     use std::io::BufRead;
     let file = std::fs::File::open(log_path).ok()?;
     let metadata = file.metadata().ok()?;

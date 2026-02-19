@@ -1,0 +1,3 @@
+interface:
+  display_name: "ccbox"
+  short_description: "Inspect sessions and histories via ccbox"

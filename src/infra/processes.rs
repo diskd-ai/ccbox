@@ -91,7 +91,10 @@ pub struct ProcessManager {
 }
 
 impl ProcessManager {
-    pub fn new(sessions_dir: PathBuf, tx: Sender<ProcessSignal>) -> Result<Self, ProcessManagerError> {
+    pub fn new(
+        sessions_dir: PathBuf,
+        tx: Sender<ProcessSignal>,
+    ) -> Result<Self, ProcessManagerError> {
         let logs_dir = sessions_dir.join(".ccbox").join("processes");
         fs::create_dir_all(&logs_dir)?;
 
@@ -150,9 +153,9 @@ impl ProcessManager {
 
         let combined_writer = Arc::new(Mutex::new(io::BufWriter::new(combined_file)));
         {
-            let mut writer = combined_writer
-                .lock()
-                .map_err(|_| SpawnAgentProcessError::OpenLog(io::Error::other("log lock poisoned")))?;
+            let mut writer = combined_writer.lock().map_err(|_| {
+                SpawnAgentProcessError::OpenLog(io::Error::other("log lock poisoned"))
+            })?;
             let _ = writeln!(
                 writer,
                 "engine: {}\nproject: {}\nstarted_at: {:?}\n---",
@@ -185,14 +188,12 @@ impl ProcessManager {
             }
         }
 
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| SpawnAgentProcessError::OpenStdout(io::Error::other("stdout missing")))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| SpawnAgentProcessError::OpenStderr(io::Error::other("stderr missing")))?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            SpawnAgentProcessError::OpenStdout(io::Error::other("stdout missing"))
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            SpawnAgentProcessError::OpenStderr(io::Error::other("stderr missing"))
+        })?;
 
         let sessions_dir = self.sessions_dir.clone();
         let tx = self.tx.clone();
@@ -215,12 +216,7 @@ impl ProcessManager {
 
         let stderr_combined = combined_writer.clone();
         std::thread::spawn(move || {
-            pipe_reader_thread_simple(
-                StreamKind::Stderr,
-                stderr,
-                stderr_file,
-                stderr_combined,
-            );
+            pipe_reader_thread_simple(StreamKind::Stderr, stderr, stderr_file, stderr_combined);
         });
 
         self.children.insert(id.clone(), child);
@@ -293,10 +289,7 @@ fn build_engine_command(
     match engine {
         AgentEngine::Codex => {
             let mut command = Command::new("codex");
-            command
-                .arg("exec")
-                .arg("--full-auto")
-                .arg("--json");
+            command.arg("exec").arg("--full-auto").arg("--json");
             if let Some(path) = last_message_path {
                 command.arg("--output-last-message").arg(path);
             }
@@ -390,7 +383,6 @@ fn pipe_reader_thread_simple(
             Err(_) => break,
         }
     }
-
 }
 
 fn write_combined_line(combined: &Arc<Mutex<io::BufWriter<File>>>, kind: StreamKind, line: &str) {
@@ -480,7 +472,10 @@ fn find_session_log_in_day_dir(
         if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
             continue;
         }
-        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
         if file_name.contains(session_id) {
             return Some(path);
         }
@@ -538,11 +533,7 @@ mod tests {
         fs::create_dir_all(expected.parent().expect("parent")).expect("mkdirs");
         fs::write(&expected, "").expect("write");
 
-        let found = find_session_log_path(
-            sessions_dir,
-            "2026-02-02T23:57:58.860Z",
-            session_id,
-        );
+        let found = find_session_log_path(sessions_dir, "2026-02-02T23:57:58.860Z", session_id);
 
         assert_eq!(found, Some(expected));
     }
@@ -561,11 +552,7 @@ mod tests {
         fs::create_dir_all(expected.parent().expect("parent")).expect("mkdirs");
         fs::write(&expected, "").expect("write");
 
-        let found = find_session_log_path(
-            sessions_dir,
-            "2026-02-19T01:58:00.000Z",
-            session_id,
-        );
+        let found = find_session_log_path(sessions_dir, "2026-02-19T01:58:00.000Z", session_id);
 
         assert_eq!(found, Some(expected));
     }

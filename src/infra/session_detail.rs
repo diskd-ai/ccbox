@@ -269,7 +269,8 @@ mod tests {
             .items
             .iter()
             .position(|item| {
-                item.kind == TimelineItemKind::TokenCount && item.summary == "tokens: total=10 last=10"
+                item.kind == TimelineItemKind::TokenCount
+                    && item.summary == "tokens: total=10 last=10"
             })
             .expect("token count");
 
