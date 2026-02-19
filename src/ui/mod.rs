@@ -3969,6 +3969,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("Navigation"),
         Line::from("  - Arrows: move selection"),
         Line::from("  - PgUp/PgDn: page up/down"),
+        Line::from("  - Mouse: wheel scrolls, left click selects/focuses"),
         Line::from("  - Enter: open"),
         Line::from("  - Esc: back / close windows"),
         Line::from("  - Delete confirm: ←/→ choose, Enter confirms (Esc cancels)"),

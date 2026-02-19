@@ -1080,8 +1080,7 @@ mod tests {
         let sessions_dir = PathBuf::from("/tmp/sessions");
         let session_id = "019c72c9-e13d-71b3-b853-5ff79aa22102";
 
-        let command =
-            build_codex_exec_resume_command(&project_path, session_id, &sessions_dir);
+        let command = build_codex_exec_resume_command(&project_path, session_id, &sessions_dir);
 
         assert_eq!(command.get_program(), OsStr::new("codex"));
 

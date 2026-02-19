@@ -1,5 +1,6 @@
 mod fork;
 mod line_editor;
+mod mouse;
 mod text_editor;
 
 use crate::app::fork::{default_fork_prompt, fork_context_from_timeline_item};
@@ -9,7 +10,7 @@ use crate::domain::{
     index_projects,
 };
 use crate::infra::{ScanWarningCount, SessionIndex};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1512,6 +1513,7 @@ pub struct ProcessOutputView {
 pub enum AppEvent {
     Key(KeyEvent),
     Paste(String),
+    Mouse(MouseEvent),
 }
 
 #[derive(Clone, Debug)]
@@ -1593,6 +1595,7 @@ pub fn update(model: AppModel, event: AppEvent) -> (AppModel, AppCommand) {
     match event {
         AppEvent::Key(key) => update_on_key(model, key),
         AppEvent::Paste(text) => update_on_paste(model, text),
+        AppEvent::Mouse(mouse) => mouse::update_on_mouse(model, mouse),
     }
 }
 

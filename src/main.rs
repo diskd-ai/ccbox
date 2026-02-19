@@ -20,8 +20,8 @@ use crate::infra::{
     watch_sessions_dir,
 };
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyboardEnhancementFlags,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::size as terminal_size;
 use crossterm::terminal::{
@@ -134,6 +134,7 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>, app::AppError>
     let mut stdout = io::stdout();
     stdout.execute(EnterAlternateScreen)?;
     let _ = stdout.execute(EnableBracketedPaste);
+    let _ = stdout.execute(EnableMouseCapture);
     let _ = stdout.execute(PushKeyboardEnhancementFlags(
         KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
     ));
@@ -148,6 +149,7 @@ fn restore_terminal(
     let _ = execute!(
         terminal.backend_mut(),
         DisableBracketedPaste,
+        DisableMouseCapture,
         PopKeyboardEnhancementFlags
     );
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -995,6 +997,10 @@ fn run(
                 }
                 Event::Paste(text) => {
                     let (next, _command) = app::update(model.clone(), AppEvent::Paste(text));
+                    *model = next;
+                }
+                Event::Mouse(mouse) => {
+                    let (next, _command) = app::update(model.clone(), AppEvent::Mouse(mouse));
                     *model = next;
                 }
                 Event::Resize(width, height) => {

@@ -150,6 +150,7 @@ Example prompts:
 ## Keybindings (prototype)
 
 - Global: `Ctrl+R` rescan · `F2` system menu · `P` processes · `F1`/`?` help · `Ctrl+Q`/`Ctrl+C` quit
+- Mouse: wheel scrolls lists/outputs/details · left click selects/focuses
 - Lists: arrow keys move selection · `PgUp`/`PgDn` page
 - Projects: type to filter · `Esc` clears filter · `Enter` opens · `Space` result (newest session) · `Del` delete (confirm)
 - Sessions: `Enter` opens · `Space` result (last Out) · `n` new session · `Del`/`Backspace` delete (confirm) · `Esc` back
