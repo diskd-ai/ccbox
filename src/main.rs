@@ -654,7 +654,14 @@ fn open_session_detail_by_log_path(model: &mut AppModel, project_path: PathBuf, 
 
     match load_session_timeline(&log_path) {
         Ok(timeline) => {
-            let from_sessions = crate::app::SessionsView::new(project_path);
+            let session_count = model
+                .data
+                .projects
+                .iter()
+                .find(|project| project.project_path == project_path)
+                .map(|project| project.sessions.len())
+                .unwrap_or(0);
+            let from_sessions = crate::app::SessionsView::new(project_path, session_count);
             *model = model.open_session_detail(
                 from_sessions,
                 session,

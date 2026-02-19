@@ -366,25 +366,32 @@ fn render_sessions(
         .split(area);
 
     let current_project = sessions_view.current_project(&model.data.projects);
-    let header_title = current_project
+    let search_title = current_project
         .map(|project| {
             format!(
-                "Sessions · {} ({})",
+                "Find Sessions · {} ({})",
                 project.name,
                 project.project_path.display()
             )
         })
-        .unwrap_or_else(|| "Sessions".to_string());
-    let header_hint = current_project
-        .map(|project| format!("{} sessions · newest first", project.sessions.len()))
-        .unwrap_or_else(|| "Project no longer exists in index.".to_string());
-    let header = Paragraph::new(header_hint).block(
+        .unwrap_or_else(|| "Find Sessions".to_string());
+    let title_budget = (chunks[0].width as usize).saturating_sub(4);
+    let search_title = truncate_end(&search_title, title_budget);
+    let search_text = if sessions_view.query.is_empty() {
+        Text::from(Line::from(Span::styled(
+            "Type to filter sessions…",
+            Style::default().fg(Color::DarkGray),
+        )))
+    } else {
+        Text::from(sessions_view.query.as_str())
+    };
+    let search = Paragraph::new(search_text).block(
         Block::default()
             .borders(Borders::ALL)
             .padding(Padding::horizontal(1))
-            .title(header_title),
+            .title(search_title),
     );
-    frame.render_widget(header, chunks[0]);
+    frame.render_widget(search, chunks[0]);
 
     let Some(project) = current_project else {
         let paragraph = Paragraph::new("Project no longer exists in index. Press Esc to go back.")
@@ -406,37 +413,69 @@ fn render_sessions(
         return;
     };
 
-    let max_width = (chunks[1].width as usize).saturating_sub(6);
-    let (size_col_width, modified_col_width) = session_right_columns_width(&project.sessions);
-    let items: Vec<ListItem> = project
-        .sessions
-        .iter()
-        .map(|session| session_list_item(session, max_width, size_col_width, modified_col_width))
-        .collect();
+    let filtered_indices = &sessions_view.filtered_indices;
+    let list_title = if sessions_view.query.trim().is_empty() {
+        format!("Sessions · {} total · newest first", project.sessions.len())
+    } else {
+        format!(
+            "Sessions · {}/{} shown · newest first",
+            filtered_indices.len(),
+            project.sessions.len()
+        )
+    };
+    let list_title_budget = (chunks[1].width as usize).saturating_sub(4);
+    let list_title = truncate_end(&list_title, list_title_budget);
 
-    let list = List::new(items)
-        .block(
+    if filtered_indices.is_empty() {
+        let message = if sessions_view.query.trim().is_empty() {
+            "No sessions found."
+        } else {
+            "No matching sessions. Press Esc to clear the filter."
+        };
+        let empty = Paragraph::new(message).block(
             Block::default()
                 .borders(Borders::ALL)
                 .padding(Padding::horizontal(1))
-                .title("Sessions"),
-        )
-        .highlight_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▸ ");
+                .title(list_title),
+        );
+        frame.render_widget(empty, chunks[1]);
+    } else {
+        let list_area = chunks[1];
+        let max_width = (list_area.width as usize).saturating_sub(6);
+        let (size_col_width, modified_col_width) =
+            session_right_columns_width_filtered(&project.sessions, filtered_indices);
+        let items: Vec<ListItem> = filtered_indices
+            .iter()
+            .copied()
+            .filter_map(|index| {
+                project.sessions.get(index).map(|session| {
+                    session_list_item(session, max_width, size_col_width, modified_col_width)
+                })
+            })
+            .collect();
 
-    let mut state = ListState::default();
-    if !project.sessions.is_empty() {
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .padding(Padding::horizontal(1))
+                    .title(list_title),
+            )
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("▸ ");
+
+        let mut state = ListState::default();
         state.select(Some(
             sessions_view
                 .session_selected
-                .min(project.sessions.len().saturating_sub(1)),
+                .min(filtered_indices.len().saturating_sub(1)),
         ));
+        frame.render_stateful_widget(list, list_area, &mut state);
     }
-    frame.render_stateful_widget(list, chunks[1], &mut state);
 
     frame.render_widget(
         sessions_footer_line(
@@ -779,11 +818,11 @@ fn sessions_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let text = if warnings == 0 {
-        "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Space=result  i=stats  n=new  Del/Backspace=delete  Esc=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+        "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Space=result  F3=stats  Ctrl+N/Cmd+N=new  Del=delete  Esc=clear/back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
             .to_string()
     } else {
         format!(
-            "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Space=result  i=stats  n=new  Del/Backspace=delete  Esc=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
+            "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Space=result  F3=stats  Ctrl+N/Cmd+N=new  Del=delete  Esc=clear/back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
         )
     };
     footer_paragraph(text, notice, update_hint, processes_running)
@@ -868,11 +907,18 @@ fn project_right_columns_width(
     (sessions_col_width, modified_col_width)
 }
 
-fn session_right_columns_width(sessions: &[crate::domain::SessionSummary]) -> (usize, usize) {
+fn session_right_columns_width_filtered(
+    sessions: &[crate::domain::SessionSummary],
+    indices: &[usize],
+) -> (usize, usize) {
     let mut size_col_width = 0usize;
     let mut modified_col_width = 0usize;
 
-    for session in sessions {
+    for session_index in indices {
+        let Some(session) = sessions.get(*session_index) else {
+            continue;
+        };
+
         let size = format_size(session.file_size_bytes, DECIMAL);
         size_col_width = size_col_width.max(UnicodeWidthStr::width(size.as_str()));
 
@@ -1400,7 +1446,7 @@ fn session_detail_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let mut parts = vec![
-        "Keys: arrows=move  PgUp/PgDn=page  Enter=ToolOut (Tool)  o=result  i=stats  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help".to_string(),
+        "Keys: arrows=move  PgUp/PgDn=page  Enter=ToolOut (Tool)  o=result  F3=stats  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help".to_string(),
         format!("items: {item_count}"),
     ];
     if truncated {
@@ -2609,13 +2655,15 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - Projects: type to filter, Esc clears filter"),
         Line::from("  - Projects: Del deletes project logs"),
         Line::from("  - Projects: Space shows Result (newest session Out)"),
-        Line::from("  - Sessions: Del/Backspace deletes session log"),
+        Line::from("  - Sessions: type to filter, Esc clears filter"),
+        Line::from("  - Sessions: Del deletes session log (Backspace edits filter)"),
         Line::from("  - Sessions: Space shows Result (last Out)"),
-        Line::from("  - Sessions: i shows Stats"),
+        Line::from("  - Sessions: Ctrl+N/Cmd+N opens New Session"),
+        Line::from("  - Sessions: F3 shows Stats"),
         Line::from("  - New Session: Ctrl+Enter/Cmd+Enter sends, Shift+Tab switches engine"),
         Line::from("  - Projects/Sessions: ● indicates online"),
         Line::from("  - Session Detail: o shows Result (last Out)"),
-        Line::from("  - Session Detail: i shows Stats"),
+        Line::from("  - Session Detail: F3 shows Stats"),
         Line::from("  - Session Detail: Enter jumps to ToolOut for Tool calls"),
         Line::from("  - Session Detail: c toggles Visible Context"),
         Line::from("  - Processes: s/e/l=open output, k=kill, Enter=open session"),
