@@ -12,6 +12,26 @@ Prototype features:
 - Processes screen (`P`) for stdout/stderr/log viewing + killing spawned agents
 - Auto-rescans when the sessions directory changes (file watcher)
 
+## Install
+
+Quick install from GitHub Releases (macOS/Linux):
+```sh
+/bin/bash -c "$(curl -fsSL -H 'Cache-Control: no-cache' https://raw.githubusercontent.com/diskd-ai/ccbox/main/scripts/install.sh)"
+```
+
+Homebrew (recommended):
+```sh
+brew tap diskd-ai/ccbox
+brew install ccbox
+```
+
+From source:
+```sh
+git clone https://github.com/diskd-ai/ccbox.git
+cd ccbox
+cargo install --path .
+```
+
 ## Screenshots
 
 ### Projects

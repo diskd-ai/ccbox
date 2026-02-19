@@ -62,16 +62,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          tag="${GITHUB_REF_NAME}"
-          asset="ccbox-${tag}-${{ matrix.target }}"
+          version="${GITHUB_REF_NAME#v}"
+          artifact="ccbox-${version}-${{ matrix.target }}"
+          mkdir -p dist
 
-          mkdir -p "dist/${asset}"
-          cp "target/${{ matrix.target }}/release/ccbox" "dist/${asset}/ccbox"
-          cp README.md LICENSE "dist/${asset}/"
+          bin_path="target/${{ matrix.target }}/release/ccbox"
+          chmod +x "$bin_path"
 
-          (cd dist && tar -czf "${asset}.tar.gz" "${asset}")
-
-          openssl dgst -sha256 -r "dist/${asset}.tar.gz" | awk '{print $1}' > "dist/${asset}.tar.gz.sha256"
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/${artifact}.tar.gz" ccbox
+          shasum -a 256 "dist/${artifact}.tar.gz" > "dist/${artifact}.tar.gz.sha256"
 
       - name: Package (zip)
         if: matrix.archive_ext == 'zip'
@@ -79,19 +78,17 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $tag = "${env:GITHUB_REF_NAME}"
-          $asset = "ccbox-$tag-${{ matrix.target }}"
+          $version = "${env:GITHUB_REF_NAME}" -replace '^v',''
+          $artifact = "ccbox-$version-${{ matrix.target }}"
 
-          New-Item -ItemType Directory -Force -Path "dist\\$asset" | Out-Null
-          Copy-Item "target\\${{ matrix.target }}\\release\\ccbox.exe" "dist\\$asset\\ccbox.exe"
-          Copy-Item "README.md" "dist\\$asset\\README.md"
-          Copy-Item "LICENSE" "dist\\$asset\\LICENSE"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
 
-          Push-Location dist
-          Compress-Archive -Path $asset -DestinationPath "$asset.zip" -Force
-          Pop-Location
+          $binPath = "target\\${{ matrix.target }}\\release\\ccbox.exe"
+          $zipPath = "dist\\$artifact.zip"
+          Compress-Archive -Path $binPath -DestinationPath $zipPath -Force
 
-          (Get-FileHash -Path "dist\\$asset.zip" -Algorithm SHA256).Hash.ToLower() | Out-File -FilePath "dist\\$asset.zip.sha256" -Encoding ascii
+          $hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
+          "$hash  $artifact.zip" | Out-File -FilePath "dist\\$artifact.zip.sha256" -Encoding ascii
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -119,4 +116,3 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
-
