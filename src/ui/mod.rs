@@ -663,7 +663,7 @@ fn render_new_session(
             spans.push(Span::styled(
                 hint.to_string(),
                 Style::default()
-                    .fg(Color::LightGreen)
+                    .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -906,7 +906,7 @@ fn footer_paragraph(
             spans.push(Span::styled(
                 hint.to_string(),
                 Style::default()
-                    .fg(Color::LightGreen)
+                    .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
