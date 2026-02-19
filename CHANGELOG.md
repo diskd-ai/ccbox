@@ -6,8 +6,15 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Changes
 
-- TUI: show `F1`/`F2`/`F3` shortcuts in the System menu.
+- TUI: show `F1`/`F2`/`F3` shortcuts in the menu bar.
 - TUI: Session Stats window uses colored metrics and comma-formatted numbers.
+- TUI: `F3` shows project-level statistics (uses a cached session index for fast startup).
+- TUI: add "New Task" to the System menu.
+- TUI: add a Window menu to navigate between screens/windows.
+
+### Fixes
+
+- TUI: Details pane scrolling accounts for wrapped content so it can reach the end.
 
 ## [0.1.5] - 2026-02-19
 
