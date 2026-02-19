@@ -214,7 +214,7 @@ fn render_main_menu_overlay(
     let desired_width = inner_width.saturating_add(4);
 
     let popup_width = (desired_width as u16).min(area.width);
-    let popup_height = (items.len() as u16).saturating_add(2).min(area.height);
+    let popup_height = (items.len() as u16).saturating_add(4).min(area.height);
 
     let mut x_offset = UnicodeWidthStr::width("  ");
     for menu in menus.iter().take(menu_index) {
@@ -238,7 +238,7 @@ fn render_main_menu_overlay(
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .padding(Padding::horizontal(1))
+        .padding(Padding::new(1, 1, 1, 1))
         .title(title);
 
     let inner = block.inner(popup);

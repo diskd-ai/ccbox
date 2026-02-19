@@ -12,6 +12,7 @@ All notable user-facing changes to `ccbox` are documented in this file.
 - TUI: add "New Task" to the System menu.
 - TUI: add a Window menu to navigate between screens/windows.
 - TUI: focused pane borders are double-line white; unfocused borders are dark gray.
+- TUI: add top/bottom padding lines inside menu dropdowns.
 
 ### Fixes
 
