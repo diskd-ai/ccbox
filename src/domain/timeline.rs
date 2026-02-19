@@ -137,23 +137,15 @@ fn parse_event_msg_value(
         }
     }
 
+    // Codex duplicates user prompts as both:
+    // - `event_msg` payload `type=user_message`, and
+    // - `response_item` payload `type=message role=user`.
+    //
+    // We only keep the `response_item` form to avoid duplicated first-user messages in the
+    // timeline. The `response_item` variant also participates in the normal message parsing
+    // flow (metadata prompt filtering, etc.).
     if payload_type == "user_message" {
-        let message = payload
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let summary =
-            first_non_empty_line(&message).unwrap_or_else(|| "(user message)".to_string());
-        return ParsedLogLine::Item(TimelineItem {
-            kind: TimelineItemKind::User,
-            turn_id: current_turn_id.map(str::to_string),
-            call_id: None,
-            timestamp,
-            timestamp_ms,
-            summary,
-            detail: message,
-        });
+        return ParsedLogLine::Ignore;
     }
 
     if payload_type == "token_count" {
@@ -481,11 +473,26 @@ mod tests {
     }
 
     #[test]
-    fn parses_user_message_event() {
+    fn ignores_user_message_event_to_avoid_duplicates() {
         let json = serde_json::json!({
             "timestamp": "2026-02-18T21:45:57.766Z",
             "type": "event_msg",
             "payload": { "type": "user_message", "message": "hello\nworld", "images": [] }
+        });
+        let parsed = parse_log_value(&json, Some("t1"));
+        assert_eq!(parsed, ParsedLogLine::Ignore);
+    }
+
+    #[test]
+    fn parses_user_message_response_item() {
+        let json = serde_json::json!({
+            "timestamp": "2026-02-18T21:45:57.766Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "hello\nworld" }]
+            }
         });
         let parsed = parse_log_value(&json, Some("t1"));
         match parsed {

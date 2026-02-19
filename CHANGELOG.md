@@ -8,6 +8,8 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+- TUI: timeline no longer duplicates the first user prompt.
+
 ## [0.1.7] - 2026-02-19
 
 ### Changes
