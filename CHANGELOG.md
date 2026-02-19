@@ -8,6 +8,14 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.7] - 2026-02-19
+
+### Changes
+
+- TUI: add Tasks window backed by SQLite (`~/.ccbox/tasks.db`) to create/view/delete/spawn reusable tasks (supports `[Image N]` references).
+
+### Fixes
+
 ## [0.1.6] - 2026-02-19
 
 ### Changes
