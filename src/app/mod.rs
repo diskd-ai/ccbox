@@ -467,7 +467,7 @@ pub struct MainMenuEntry {
     pub key: MainMenuKey,
 }
 
-pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 6] = [
+pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 7] = [
     MainMenuEntry {
         label: "Help",
         hotkey: "F1 or ?",
@@ -490,6 +490,14 @@ pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 6] = [
         key: MainMenuKey {
             code: KeyCode::F(3),
             modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "New Task",
+        hotkey: "Ctrl+N or Cmd+N",
+        key: MainMenuKey {
+            code: KeyCode::Char('n'),
+            modifiers: KeyModifiers::CONTROL,
         },
     },
     MainMenuEntry {
@@ -1103,6 +1111,10 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
     let mut model = model;
     model.notice = None;
 
+    let command_modifier = key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::SUPER)
+        || key.modifiers.contains(KeyModifiers::META);
+
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return (model, AppCommand::Quit);
     }
@@ -1111,6 +1123,54 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
         return (model, AppCommand::Rescan);
+    }
+    if command_modifier && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
+        if model.help_open
+            || model.system_menu.is_some()
+            || model.delete_confirm.is_some()
+            || model.delete_session_confirm.is_some()
+            || model.session_result_preview.is_some()
+            || model.session_stats_overlay.is_some()
+            || model.project_stats_overlay.is_some()
+        {
+            return (model, AppCommand::None);
+        }
+
+        match model.view.clone() {
+            View::Projects(projects_view) => {
+                let Some(project_index) = projects_view
+                    .filtered_indices
+                    .get(projects_view.selected)
+                    .copied()
+                else {
+                    model.notice = Some("No project selected.".to_string());
+                    return (model, AppCommand::None);
+                };
+                let Some(project) = model.data.projects.get(project_index) else {
+                    model.notice = Some("No project selected.".to_string());
+                    return (model, AppCommand::None);
+                };
+
+                let sessions_view =
+                    SessionsView::new(project.project_path.clone(), project.sessions.len());
+                model.view = View::NewSession(NewSessionView::new(sessions_view));
+            }
+            View::Sessions(sessions_view) => {
+                model.view = View::NewSession(NewSessionView::new(sessions_view));
+            }
+            View::SessionDetail(detail_view) => {
+                model.view = View::NewSession(NewSessionView::new(detail_view.from_sessions));
+            }
+            View::NewSession(_) => {}
+            View::Processes(_) | View::ProcessOutput(_) | View::Error => {
+                model.notice = Some("Open a project to create a task.".to_string());
+                return (model, AppCommand::None);
+            }
+        }
+
+        model.help_open = false;
+        model.system_menu = None;
+        return (model, AppCommand::None);
     }
 
     if matches!(key.code, KeyCode::F(2)) {
