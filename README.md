@@ -100,6 +100,14 @@ cargo run -- history "/path/to/session.jsonl"
 cargo run -- history "/path/to/session.jsonl" --full
 ```
 
+CLI details:
+- Auto-selects the project for the current folder (or nearest parent) when `project-path` is omitted.
+- `projects` output: `project_name<TAB>project_path<TAB>session_count`
+- `sessions` output: `started_at_rfc3339<TAB>session_id<TAB>title<TAB>log_path` (newest-first)
+- `history` prints a readable timeline; `--full` includes long details (tool calls/outputs, full messages).
+- Pipe-friendly output (handles broken pipes like `ccbox history | head`).
+- Parse warnings and “truncated” notices are printed to stderr.
+
 Optional overrides:
 - `CODEX_SESSIONS_DIR` (defaults to `~/.codex/sessions`; Windows: `%USERPROFILE%\\.codex\\sessions`)
 
