@@ -112,11 +112,37 @@ Notes:
 
 ## Skill (skills.sh)
 
-Install the `ccbox` skill for agents:
+This repo ships an agent skill named `ccbox` that teaches Codex/Claude/Gemini how to inspect local session logs using the `ccbox` CLI (`projects`, `sessions`, `history`).
+
+Install it:
 
 ```bash
 npx skills add diskd-ai/ccbox --skill ccbox --global --yes
 ```
+
+Make it available to your agent (one-time). If your agent already reads `~/.agents/skills`, you can skip this:
+
+```bash
+# Codex CLI
+mkdir -p ~/.codex/skills
+ln -s ~/.agents/skills/ccbox ~/.codex/skills/ccbox
+
+# Claude Code
+mkdir -p ~/.claude/skills
+ln -s ~/.agents/skills/ccbox ~/.claude/skills/ccbox
+
+# Gemini CLI
+mkdir -p ~/.gemini/skills
+ln -s ~/.agents/skills/ccbox ~/.gemini/skills/ccbox
+```
+
+Requirements: `ccbox` on your `$PATH` and access to your sessions directory (`CODEX_SESSIONS_DIR` if needed).
+
+Example prompts:
+
+- Codex: `codex "Use the ccbox skill to summarize the latest session for this repo."`
+- Claude: `claude "Use the ccbox skill to summarize the latest session for this repo."`
+- Gemini: `gemini "Use the ccbox skill to summarize the latest session for this repo."`
 
 ## Keybindings (prototype)
 
