@@ -4,7 +4,7 @@ use crate::domain::{
     AgentEngine, ProjectIndex, ProjectSummary, SessionStats, SessionSummary, TimelineItem,
     TimelineItemKind, TurnContextSummary, index_projects,
 };
-use crate::infra::ScanWarningCount;
+use crate::infra::{ScanWarningCount, SessionIndex};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -58,6 +58,7 @@ impl AppData {
 #[derive(Clone, Debug)]
 pub struct AppModel {
     pub data: AppData,
+    pub session_index: Arc<SessionIndex>,
     pub view: View,
     pub terminal_size: (u16, u16),
     pub notice: Option<String>,
@@ -68,6 +69,7 @@ pub struct AppModel {
     pub delete_session_confirm: Option<DeleteSessionConfirmDialog>,
     pub session_result_preview: Option<SessionResultPreviewOverlay>,
     pub session_stats_overlay: Option<SessionStatsOverlay>,
+    pub project_stats_overlay: Option<ProjectStatsOverlay>,
     pub processes: Vec<ProcessInfo>,
 }
 
@@ -80,6 +82,7 @@ impl AppModel {
         };
         Self {
             data,
+            session_index: Arc::new(SessionIndex::default()),
             view,
             terminal_size: (0, 0),
             notice: None,
@@ -90,6 +93,7 @@ impl AppModel {
             delete_session_confirm: None,
             session_result_preview: None,
             session_stats_overlay: None,
+            project_stats_overlay: None,
             processes: Vec::new(),
         }
     }
@@ -98,6 +102,7 @@ impl AppModel {
         if data.load_error.is_some() {
             return Self {
                 data,
+                session_index: self.session_index.clone(),
                 view: View::Error,
                 terminal_size: self.terminal_size,
                 notice: None,
@@ -108,6 +113,7 @@ impl AppModel {
                 delete_session_confirm: self.delete_session_confirm.clone(),
                 session_result_preview: self.session_result_preview.clone(),
                 session_stats_overlay: self.session_stats_overlay.clone(),
+                project_stats_overlay: self.project_stats_overlay.clone(),
                 processes: self.processes.clone(),
             };
         }
@@ -265,6 +271,7 @@ impl AppModel {
 
         Self {
             data,
+            session_index: self.session_index.clone(),
             view,
             terminal_size: self.terminal_size,
             notice: None,
@@ -275,6 +282,7 @@ impl AppModel {
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
+            project_stats_overlay: self.project_stats_overlay.clone(),
             processes: self.processes.clone(),
         }
     }
@@ -282,6 +290,7 @@ impl AppModel {
     pub fn with_terminal_size(&self, width: u16, height: u16) -> Self {
         Self {
             data: self.data.clone(),
+            session_index: self.session_index.clone(),
             view: self.view.clone(),
             terminal_size: (width, height),
             notice: self.notice.clone(),
@@ -292,6 +301,7 @@ impl AppModel {
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
+            project_stats_overlay: self.project_stats_overlay.clone(),
             processes: self.processes.clone(),
         }
     }
@@ -299,6 +309,7 @@ impl AppModel {
     pub fn with_notice(&self, notice: Option<String>) -> Self {
         Self {
             data: self.data.clone(),
+            session_index: self.session_index.clone(),
             view: self.view.clone(),
             terminal_size: self.terminal_size,
             notice,
@@ -309,6 +320,7 @@ impl AppModel {
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
+            project_stats_overlay: self.project_stats_overlay.clone(),
             processes: self.processes.clone(),
         }
     }
@@ -330,6 +342,7 @@ impl AppModel {
 
         Self {
             data: self.data.clone(),
+            session_index: self.session_index.clone(),
             terminal_size: self.terminal_size,
             notice: None,
             update_hint: self.update_hint.clone(),
@@ -339,6 +352,7 @@ impl AppModel {
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
+            project_stats_overlay: self.project_stats_overlay.clone(),
             processes: self.processes.clone(),
             view: View::SessionDetail(SessionDetailView {
                 from_sessions,
@@ -371,6 +385,46 @@ pub struct SessionStatsOverlay {
     pub session: SessionSummary,
     pub stats: SessionStats,
     pub scroll: u16,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectStatsOverlay {
+    pub project_name: String,
+    pub project_path: PathBuf,
+    pub session_count: usize,
+    pub indexed_sessions: usize,
+    pub total_tokens_indexed: u64,
+    pub missing_tokens_sessions: usize,
+    pub scroll: u16,
+}
+
+impl ProjectStatsOverlay {
+    pub fn from_project(project: &ProjectSummary, index: &SessionIndex) -> Self {
+        let mut total_tokens_indexed = 0u64;
+        let mut indexed_sessions = 0usize;
+        let mut missing_tokens_sessions = 0usize;
+        for session in &project.sessions {
+            match index.total_tokens(&session.log_path) {
+                Some(tokens) => {
+                    total_tokens_indexed = total_tokens_indexed.saturating_add(tokens);
+                    indexed_sessions = indexed_sessions.saturating_add(1);
+                }
+                None => {
+                    missing_tokens_sessions = missing_tokens_sessions.saturating_add(1);
+                }
+            }
+        }
+
+        Self {
+            project_name: project.name.clone(),
+            project_path: project.project_path.clone(),
+            session_count: project.sessions.len(),
+            indexed_sessions,
+            total_tokens_indexed,
+            missing_tokens_sessions,
+            scroll: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -431,7 +485,7 @@ pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 6] = [
         },
     },
     MainMenuEntry {
-        label: "Window",
+        label: "Statistics",
         hotkey: "F3",
         key: MainMenuKey {
             code: KeyCode::F(3),
@@ -1064,6 +1118,7 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
             || model.delete_session_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
+            || model.project_stats_overlay.is_some()
         {
             return (model, AppCommand::None);
         }
@@ -1082,6 +1137,10 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
 
     if let Some(menu) = model.system_menu.take() {
         return update_system_menu_overlay(model, menu, key);
+    }
+
+    if let Some(overlay) = model.project_stats_overlay.take() {
+        return update_project_stats_overlay(model, overlay, key);
     }
 
     if let Some(overlay) = model.session_stats_overlay.take() {
@@ -1223,6 +1282,9 @@ fn update_on_paste(model: AppModel, text: String) -> (AppModel, AppCommand) {
     if model.session_stats_overlay.is_some() {
         return (model, AppCommand::None);
     }
+    if model.project_stats_overlay.is_some() {
+        return (model, AppCommand::None);
+    }
 
     let view = model.view.clone();
     if let View::NewSession(mut new_session_view) = view {
@@ -1292,6 +1354,37 @@ fn update_session_stats_overlay(
     }
 
     model.session_stats_overlay = Some(overlay);
+    (model, AppCommand::None)
+}
+
+fn update_project_stats_overlay(
+    mut model: AppModel,
+    mut overlay: ProjectStatsOverlay,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Backspace => {
+            model.project_stats_overlay = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Up => {
+            overlay.scroll = overlay.scroll.saturating_sub(1);
+        }
+        KeyCode::Down => {
+            overlay.scroll = overlay.scroll.saturating_add(1);
+        }
+        KeyCode::PageUp => {
+            let step = page_step_standard_list(model.terminal_size) as u16;
+            overlay.scroll = overlay.scroll.saturating_sub(step);
+        }
+        KeyCode::PageDown => {
+            let step = page_step_standard_list(model.terminal_size) as u16;
+            overlay.scroll = overlay.scroll.saturating_add(step);
+        }
+        _ => {}
+    }
+
+    model.project_stats_overlay = Some(overlay);
     (model, AppCommand::None)
 }
 
@@ -1388,6 +1481,7 @@ fn update_error(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         KeyCode::Esc | KeyCode::Backspace => (
             AppModel {
                 data: model.data.clone(),
+                session_index: model.session_index.clone(),
                 terminal_size: model.terminal_size,
                 notice: None,
                 update_hint: model.update_hint.clone(),
@@ -1397,6 +1491,7 @@ fn update_error(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
+                project_stats_overlay: model.project_stats_overlay.clone(),
                 processes: model.processes.clone(),
                 view: View::Projects(ProjectsView::new(&model.data.projects)),
             },
@@ -1412,6 +1507,22 @@ fn update_projects(
     key: KeyEvent,
 ) -> (AppModel, AppCommand) {
     match key.code {
+        KeyCode::F(3) => {
+            let Some(project_index) = view.filtered_indices.get(view.selected).copied() else {
+                return (model, AppCommand::None);
+            };
+            let Some(project) = model.data.projects.get(project_index) else {
+                return (model, AppCommand::None);
+            };
+
+            model.project_stats_overlay = Some(ProjectStatsOverlay::from_project(
+                project,
+                &model.session_index,
+            ));
+            model.help_open = false;
+            model.system_menu = None;
+            return (model, AppCommand::None);
+        }
         KeyCode::Enter => {
             let Some(project_index) = view.filtered_indices.get(view.selected).copied() else {
                 return (model, AppCommand::None);
@@ -1421,6 +1532,7 @@ fn update_projects(
             };
             let next = AppModel {
                 data: model.data.clone(),
+                session_index: model.session_index.clone(),
                 terminal_size: model.terminal_size,
                 notice: None,
                 update_hint: model.update_hint.clone(),
@@ -1430,6 +1542,7 @@ fn update_projects(
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
+                project_stats_overlay: model.project_stats_overlay.clone(),
                 processes: model.processes.clone(),
                 view: View::Sessions(SessionsView::new(
                     project.project_path.clone(),
@@ -1501,6 +1614,7 @@ fn update_projects(
     (
         AppModel {
             data: model.data.clone(),
+            session_index: model.session_index.clone(),
             terminal_size: model.terminal_size,
             notice: None,
             update_hint: model.update_hint.clone(),
@@ -1510,6 +1624,7 @@ fn update_projects(
             delete_session_confirm: model.delete_session_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
             session_stats_overlay: model.session_stats_overlay.clone(),
+            project_stats_overlay: model.project_stats_overlay.clone(),
             processes: model.processes.clone(),
             view: View::Projects(view),
         },
@@ -1689,6 +1804,7 @@ fn update_sessions(
 
             let next = AppModel {
                 data: model.data.clone(),
+                session_index: model.session_index.clone(),
                 terminal_size: model.terminal_size,
                 notice: None,
                 update_hint: model.update_hint.clone(),
@@ -1698,6 +1814,7 @@ fn update_sessions(
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
+                project_stats_overlay: model.project_stats_overlay.clone(),
                 processes: model.processes.clone(),
                 view: View::Projects(ProjectsView::new(&model.data.projects)),
             };
@@ -1740,6 +1857,7 @@ fn update_sessions(
             if !opened {
                 let next = AppModel {
                     data: model.data.clone(),
+                    session_index: model.session_index.clone(),
                     terminal_size: model.terminal_size,
                     notice: None,
                     update_hint: model.update_hint.clone(),
@@ -1749,6 +1867,7 @@ fn update_sessions(
                     delete_session_confirm: model.delete_session_confirm.clone(),
                     session_result_preview: model.session_result_preview.clone(),
                     session_stats_overlay: model.session_stats_overlay.clone(),
+                    project_stats_overlay: model.project_stats_overlay.clone(),
                     processes: model.processes.clone(),
                     view: View::Projects(ProjectsView::new(&model.data.projects)),
                 };
@@ -1761,6 +1880,7 @@ fn update_sessions(
         KeyCode::Char('n') | KeyCode::Char('N') if new_modifier => {
             let next = AppModel {
                 data: model.data.clone(),
+                session_index: model.session_index.clone(),
                 terminal_size: model.terminal_size,
                 notice: None,
                 update_hint: model.update_hint.clone(),
@@ -1770,6 +1890,7 @@ fn update_sessions(
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
+                project_stats_overlay: model.project_stats_overlay.clone(),
                 processes: model.processes.clone(),
                 view: View::NewSession(NewSessionView::new(view.clone())),
             };
@@ -1805,6 +1926,7 @@ fn update_sessions(
     (
         AppModel {
             data: model.data.clone(),
+            session_index: model.session_index.clone(),
             terminal_size: model.terminal_size,
             notice: None,
             update_hint: model.update_hint.clone(),
@@ -1814,6 +1936,7 @@ fn update_sessions(
             delete_session_confirm: model.delete_session_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
             session_stats_overlay: model.session_stats_overlay.clone(),
+            project_stats_overlay: model.project_stats_overlay.clone(),
             processes: model.processes.clone(),
             view: View::Sessions(view),
         },

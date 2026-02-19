@@ -92,6 +92,10 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
     if let Some(overlay) = &model.session_stats_overlay {
         render_session_stats_overlay(frame, content_area, overlay);
     }
+
+    if let Some(overlay) = &model.project_stats_overlay {
+        render_project_stats_overlay(frame, content_area, overlay);
+    }
 }
 
 fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
@@ -146,7 +150,7 @@ fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
         Span::styled(" System", hint_label_style),
         Span::styled("  ", base_style),
         Span::styled("F3", hint_key_style),
-        Span::styled(" Window", hint_label_style),
+        Span::styled(" Statistics", hint_label_style),
     ];
     let hint_width: usize = hint_spans
         .iter()
@@ -2663,6 +2667,139 @@ fn render_session_result_preview_overlay(
     frame.render_widget(paragraph, popup);
 }
 
+fn render_project_stats_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    overlay: &crate::app::ProjectStatsOverlay,
+) {
+    let popup = centered_rect(82, 58, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .title("Project Stats");
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(inner);
+
+    let max_line_width = (chunks[0].width as usize).saturating_sub(1);
+
+    let label_style = Style::default().fg(Color::Gray);
+    let value_style = Style::default().fg(Color::White);
+    let dim_style = Style::default().fg(Color::DarkGray);
+    let path_style = Style::default().fg(Color::LightBlue);
+    let section_style = Style::default()
+        .fg(Color::LightBlue)
+        .add_modifier(Modifier::BOLD);
+    let token_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let warning_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    let project_prefix = "Project: ";
+    let project_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(project_prefix));
+    let project_value = truncate_end(&overlay.project_name, project_budget);
+    lines.push(Line::from(vec![
+        Span::styled(project_prefix, label_style),
+        Span::styled(project_value, value_style.add_modifier(Modifier::BOLD)),
+    ]));
+
+    let path_prefix = "Path: ";
+    let path_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(path_prefix));
+    let path_value = truncate_middle(&overlay.project_path.display().to_string(), path_budget);
+    lines.push(Line::from(vec![
+        Span::styled(path_prefix, label_style),
+        Span::styled(path_value, path_style),
+    ]));
+
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![Span::styled("Sessions", section_style)]));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("Total:   ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.session_count),
+            value_style.add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("Indexed: ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.indexed_sessions),
+            value_style.add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" / ", dim_style),
+        Span::styled(format_commas_usize(overlay.session_count), dim_style),
+    ]));
+
+    let missing_style = if overlay.missing_tokens_sessions > 0 {
+        warning_style
+    } else {
+        dim_style
+    };
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("Missing tokens: ", label_style),
+        Span::styled(
+            format_commas_usize(overlay.missing_tokens_sessions),
+            missing_style,
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![Span::styled("Tokens", section_style)]));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("Total (indexed): ", label_style),
+        Span::styled(format_commas_u64(overlay.total_tokens_indexed), token_style),
+    ]));
+    if overlay.indexed_sessions > 0 {
+        let avg = overlay.total_tokens_indexed / overlay.indexed_sessions as u64;
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled("Avg / session:   ", label_style),
+            Span::styled(format_commas_u64(avg), value_style),
+        ]));
+    }
+
+    if overlay.missing_tokens_sessions > 0 {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled("Note: totals update in background.", dim_style),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled("Cache", section_style)]));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("Index: ", label_style),
+        Span::styled("~/.ccbox/session_index.json", dim_style),
+    ]));
+
+    let paragraph = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((overlay.scroll, 0));
+    frame.render_widget(paragraph, chunks[0]);
+
+    let hint = Paragraph::new("Keys: arrows/PgUp/PgDn=scroll  Esc/Backspace=close")
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    frame.render_widget(hint, chunks[1]);
+}
+
 fn render_session_stats_overlay(
     frame: &mut Frame,
     area: Rect,
@@ -2695,13 +2832,19 @@ fn render_session_stats_overlay(
     let token_style = Style::default()
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
-    let success_style = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
-    let invalid_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let success_style = Style::default()
+        .fg(Color::Green)
+        .add_modifier(Modifier::BOLD);
+    let invalid_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
     let error_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
     let unknown_style = Style::default()
         .fg(Color::DarkGray)
         .add_modifier(Modifier::BOLD);
-    let added_style = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let added_style = Style::default()
+        .fg(Color::Green)
+        .add_modifier(Modifier::BOLD);
     let removed_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
 
     let duration = overlay.stats.duration_ms.and_then(|ms| {
@@ -2787,7 +2930,8 @@ fn render_session_stats_overlay(
     ]));
     if let Some(modified) = overlay.session.file_modified {
         let modified_prefix = "Modified: ";
-        let modified_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(modified_prefix));
+        let modified_budget =
+            max_line_width.saturating_sub(UnicodeWidthStr::width(modified_prefix));
         let modified_value = truncate_end(&relative_time_ago(Some(modified)), modified_budget);
         lines.push(Line::from(vec![
             Span::styled(modified_prefix, label_style),
@@ -2803,10 +2947,7 @@ fn render_session_stats_overlay(
     if UnicodeWidthStr::width(log_size_value.as_str()) <= log_size_budget {
         lines.push(Line::from(vec![
             Span::styled(log_size_prefix, label_style),
-            Span::styled(
-                log_size_human,
-                value_style.add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(log_size_human, value_style.add_modifier(Modifier::BOLD)),
             Span::styled(" (", dim_style),
             Span::styled(log_size_bytes, dim_style),
             Span::styled(")", dim_style),
@@ -2820,10 +2961,7 @@ fn render_session_stats_overlay(
 
     let log_prefix = "Log: ";
     let log_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(log_prefix));
-    let log_value = truncate_middle(
-        &overlay.session.log_path.display().to_string(),
-        log_budget,
-    );
+    let log_value = truncate_middle(&overlay.session.log_path.display().to_string(), log_budget);
     lines.push(Line::from(vec![
         Span::styled(log_prefix, label_style),
         Span::styled(log_value, path_style),
@@ -3085,6 +3223,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - Projects: type to filter, Esc clears filter"),
         Line::from("  - Projects: Del deletes project logs"),
         Line::from("  - Projects: Space shows Result (newest session Out)"),
+        Line::from("  - Projects: F3 shows Statistics"),
         Line::from("  - Sessions: type to filter, Esc clears filter"),
         Line::from("  - Sessions: Del deletes session log (Backspace edits filter)"),
         Line::from("  - Sessions: Space shows Result (last Out)"),

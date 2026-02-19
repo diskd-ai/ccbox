@@ -9,9 +9,10 @@ use crate::app::{AppCommand, AppEvent, AppModel};
 use crate::cli::CliInvocation;
 use crate::domain::{compute_session_stats, make_session_summary, parse_session_meta_line};
 use crate::infra::{
-    KillProcessError, ProcessExit, ProcessManager, ProcessSignal, WatchSignal, delete_session_logs,
-    load_last_assistant_output, load_session_timeline, read_from_offset, read_tail,
-    resolve_sessions_dir, scan_sessions_dir, watch_sessions_dir,
+    KillProcessError, ProcessExit, ProcessManager, ProcessSignal, SessionIndex, WatchSignal,
+    delete_session_logs, load_last_assistant_output, load_session_index, load_session_timeline,
+    read_from_offset, read_tail, refresh_session_index, resolve_ccbox_state_dir,
+    resolve_sessions_dir, save_session_index, scan_sessions_dir, watch_sessions_dir,
 };
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyboardEnhancementFlags,
@@ -43,6 +44,16 @@ enum MainError {
 #[derive(Clone, Debug)]
 enum UpdateSignal {
     UpdateAvailable { latest_tag: String },
+}
+
+#[derive(Clone, Debug)]
+struct SessionIndexRequest {
+    sessions: Vec<crate::domain::SessionSummary>,
+}
+
+#[derive(Clone, Debug)]
+enum SessionIndexSignal {
+    Updated { index: Arc<SessionIndex> },
 }
 
 fn main() {
@@ -146,6 +157,30 @@ fn run(
     let (update_tx, update_rx) = channel::<UpdateSignal>();
     spawn_update_check(update_tx);
 
+    let (session_index_req_tx, session_index_rx) = match resolve_ccbox_state_dir() {
+        Ok(state_dir) => {
+            match load_session_index(&state_dir) {
+                Ok(index) => model.session_index = Arc::new(index),
+                Err(error) => {
+                    model.session_index = Arc::new(SessionIndex::default());
+                    *model = model
+                        .with_notice(Some(format!("Index cache reset (failed to load): {error}")));
+                }
+            }
+
+            let (req_tx, req_rx) = channel::<SessionIndexRequest>();
+            let (tx, rx) = channel::<SessionIndexSignal>();
+            spawn_session_indexer(req_rx, tx, state_dir, model.session_index.clone());
+            request_session_index_refresh(&req_tx, model);
+            (Some(req_tx), Some(rx))
+        }
+        Err(error) => {
+            model.session_index = Arc::new(SessionIndex::default());
+            *model = model.with_notice(Some(format!("Index cache disabled: {error}")));
+            (None, None)
+        }
+    };
+
     let watcher = match watch_sessions_dir(&model.data.sessions_dir) {
         Ok(watcher) => Some(watcher),
         Err(error) => {
@@ -179,6 +214,17 @@ fn run(
                         "Update available: v{} -> {latest_tag}. Run `ccbox update`.",
                         env!("CARGO_PKG_VERSION")
                     ));
+                }
+            }
+        }
+
+        if let Some(rx) = &session_index_rx {
+            while let Ok(signal) = rx.try_recv() {
+                match signal {
+                    SessionIndexSignal::Updated { index } => {
+                        model.session_index = index;
+                        refresh_open_project_stats_overlay(model);
+                    }
                 }
             }
         }
@@ -240,6 +286,8 @@ fn run(
                     Some("Auto-rescanned.".to_string())
                 };
                 *model = updated.with_notice(notice);
+                refresh_open_project_stats_overlay(model);
+                request_session_index_refresh_optional(&session_index_req_tx, model);
             }
         }
 
@@ -266,6 +314,8 @@ fn run(
                                 }
                             };
                             *model = model.with_data(new_data);
+                            refresh_open_project_stats_overlay(model);
+                            request_session_index_refresh_optional(&session_index_req_tx, model);
                         }
                         AppCommand::OpenSessionDetail {
                             from_sessions,
@@ -361,6 +411,8 @@ fn run(
                                 }
                             };
                             *model = model.with_data(new_data);
+                            refresh_open_project_stats_overlay(model);
+                            request_session_index_refresh_optional(&session_index_req_tx, model);
 
                             let mut message =
                                 format!("Deleted {} session log(s).", outcome.deleted);
@@ -395,6 +447,8 @@ fn run(
                                 }
                             };
                             *model = model.with_data(new_data);
+                            refresh_open_project_stats_overlay(model);
+                            request_session_index_refresh_optional(&session_index_req_tx, model);
 
                             let mut message =
                                 format!("Deleted {} session log(s).", outcome.deleted);
@@ -514,6 +568,73 @@ fn spawn_update_check(tx: Sender<UpdateSignal>) {
             latest_tag: update.latest_tag,
         });
     });
+}
+
+fn spawn_session_indexer(
+    rx: std::sync::mpsc::Receiver<SessionIndexRequest>,
+    tx: Sender<SessionIndexSignal>,
+    state_dir: PathBuf,
+    initial: Arc<SessionIndex>,
+) {
+    std::thread::spawn(move || {
+        let mut current = initial;
+        loop {
+            let request = match rx.recv() {
+                Ok(request) => request,
+                Err(_) => return,
+            };
+
+            let mut sessions = request.sessions;
+            while let Ok(next) = rx.try_recv() {
+                sessions = next.sessions;
+            }
+
+            let next = Arc::new(refresh_session_index(&sessions, current.as_ref()));
+            let _ = save_session_index(&state_dir, next.as_ref());
+            current = next.clone();
+            let _ = tx.send(SessionIndexSignal::Updated { index: next });
+        }
+    });
+}
+
+fn request_session_index_refresh(tx: &Sender<SessionIndexRequest>, model: &AppModel) {
+    let sessions = model
+        .data
+        .projects
+        .iter()
+        .flat_map(|project| project.sessions.iter().cloned())
+        .collect::<Vec<_>>();
+    let _ = tx.send(SessionIndexRequest { sessions });
+}
+
+fn request_session_index_refresh_optional(
+    tx: &Option<Sender<SessionIndexRequest>>,
+    model: &AppModel,
+) {
+    let Some(tx) = tx else {
+        return;
+    };
+    request_session_index_refresh(tx, model);
+}
+
+fn refresh_open_project_stats_overlay(model: &mut AppModel) {
+    let Some(current) = model.project_stats_overlay.clone() else {
+        return;
+    };
+    let Some(project) = model
+        .data
+        .projects
+        .iter()
+        .find(|project| project.project_path == current.project_path)
+    else {
+        model.project_stats_overlay = None;
+        return;
+    };
+
+    let mut refreshed =
+        crate::app::ProjectStatsOverlay::from_project(project, model.session_index.as_ref());
+    refreshed.scroll = current.scroll;
+    model.project_stats_overlay = Some(refreshed);
 }
 
 fn apply_process_signal(model: &mut AppModel, signal: ProcessSignal) {

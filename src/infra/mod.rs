@@ -2,6 +2,7 @@ mod delete;
 mod processes;
 mod scan;
 mod session_detail;
+mod session_index;
 mod update;
 mod watch;
 
@@ -9,5 +10,6 @@ pub use delete::*;
 pub use processes::*;
 pub use scan::*;
 pub use session_detail::*;
+pub use session_index::*;
 pub use update::*;
 pub use watch::*;
