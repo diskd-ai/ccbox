@@ -865,7 +865,13 @@ fn footer_paragraph(
                     .fg(Color::LightGreen)
                     .add_modifier(Modifier::BOLD),
             ));
+        } else {
+            spans.push(Span::raw("  ·  "));
+            spans.push(Span::raw(format!("v{}", env!("CARGO_PKG_VERSION"))));
         }
+    } else {
+        spans.push(Span::raw("  ·  "));
+        spans.push(Span::raw(format!("v{}", env!("CARGO_PKG_VERSION"))));
     }
     if processes_running {
         spans.push(Span::raw("  ·  "));
