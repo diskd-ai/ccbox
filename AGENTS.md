@@ -46,11 +46,17 @@ CODEX_SESSIONS_DIR=/path/to/sessions cargo run
 
 ## Release Guidelines
 
+- Create a release only when explicitly requested by the maintainer (do not bump versions or push tags by default).
 - Release only after code/doc changes are committed and pushed.
 - For every release, update `CHANGELOG.md` (user-facing changes only; keep newest entry at the top; `### Changes` before `### Fixes`).
 - For a new release: bump `Cargo.toml` version, then create and push an annotated tag `vX.Y.Z` (this triggers the GitHub Actions `Release` workflow).
 - Verify the release completed and assets exist (`gh run watch …`, `gh release view vX.Y.Z`).
 - After releasing, verify the self-update path works against the new release (`ccbox update`).
+
+## System Menu Guidelines
+
+- Add global actions to the System menu (see `src/app/mod.rs` `SYSTEM_MENU_ITEMS`).
+- Prefer view-specific hotkeys for view-specific actions; update the view footer/help text when adding hotkeys.
 
 ## Security & Configuration Tips
 

@@ -58,7 +58,7 @@ What’s happening / features:
 
 What’s happening / features:
 - Timeline view of the session: messages, outputs, and other events in order.
-- `Enter` toggles expanded details; `c` adjusts the visible context window.
+- Details are always expanded; `Enter` jumps Tool → ToolOut; `c` adjusts the visible context window.
 - `o` copies/opens the last “Out” result quickly.
 
 ### New Session
@@ -132,12 +132,12 @@ npx skills add diskd-ai/ccbox --skill ccbox --global --yes
 
 ## Keybindings (prototype)
 
-- Global: `Ctrl+R` rescan · `P` processes · `F1`/`?` help · `Ctrl+Q`/`Ctrl+C` quit
+- Global: `Ctrl+R` rescan · `F2` system menu · `P` processes · `F1`/`?` help · `Ctrl+Q`/`Ctrl+C` quit
 - Lists: arrow keys move selection · `PgUp`/`PgDn` page
 - Projects: type to filter · `Esc` clears filter · `Enter` opens · `Space` result (newest session) · `Del` delete (confirm)
 - Sessions: `Enter` opens · `Space` result (last Out) · `n` new session · `Del`/`Backspace` delete (confirm) · `Esc` back
 - New Session: edit/paste · `Ctrl+Enter`/`Cmd+Enter` send · `Shift+Tab` switch engine · `Esc` cancel
-- Session Detail: `Enter` toggles details · `o` result (last Out) · `c` visible context window · `Esc`/`Backspace` back
+- Session Detail: `Enter` ToolOut (Tool call) · `o` result (last Out) · `c` visible context window · `Esc`/`Backspace` back
 - Processes: `s` stdout · `e` stderr · `l` log · `k` kill · `Enter` opens session (Codex only)
 
 ## License

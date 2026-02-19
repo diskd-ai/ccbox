@@ -12,34 +12,189 @@ use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
 pub fn render(frame: &mut Frame, model: &AppModel) {
-    let area = frame.area();
-    match &model.view {
-        View::Projects(projects_view) => render_projects(frame, area, model, projects_view),
-        View::Sessions(sessions_view) => render_sessions(frame, area, model, sessions_view),
-        View::NewSession(new_session_view) => {
-            render_new_session(frame, area, model, new_session_view)
+    let full_area = frame.area();
+    if full_area.width == 0 || full_area.height == 0 {
+        return;
+    }
+
+    render_menu_bar(frame, full_area, model);
+
+    let content_area = if full_area.height > 1 {
+        Rect {
+            x: full_area.x,
+            y: full_area.y.saturating_add(1),
+            width: full_area.width,
+            height: full_area.height.saturating_sub(1),
         }
-        View::SessionDetail(detail_view) => render_session_detail(frame, area, model, detail_view),
-        View::Processes(processes_view) => render_processes(frame, area, model, processes_view),
-        View::ProcessOutput(output_view) => render_process_output(frame, area, model, output_view),
-        View::Error => render_error(frame, area, model),
+    } else {
+        full_area
+    };
+
+    match &model.view {
+        View::Projects(projects_view) => render_projects(frame, content_area, model, projects_view),
+        View::Sessions(sessions_view) => render_sessions(frame, content_area, model, sessions_view),
+        View::NewSession(new_session_view) => {
+            render_new_session(frame, content_area, model, new_session_view)
+        }
+        View::SessionDetail(detail_view) => {
+            render_session_detail(frame, content_area, model, detail_view)
+        }
+        View::Processes(processes_view) => render_processes(frame, content_area, model, processes_view),
+        View::ProcessOutput(output_view) => {
+            render_process_output(frame, content_area, model, output_view)
+        }
+        View::Error => render_error(frame, content_area, model),
+    }
+
+    if let Some(menu) = &model.system_menu {
+        render_system_menu_overlay(frame, content_area, menu);
     }
 
     if model.help_open {
-        render_help_overlay(frame, area);
+        render_help_overlay(frame, content_area);
     }
 
     if let Some(confirm) = &model.delete_confirm {
-        render_delete_confirm_overlay(frame, area, model, confirm);
+        render_delete_confirm_overlay(frame, content_area, model, confirm);
     }
 
     if let Some(confirm) = &model.delete_session_confirm {
-        render_delete_session_confirm_overlay(frame, area, model, confirm);
+        render_delete_session_confirm_overlay(frame, content_area, model, confirm);
     }
 
     if let Some(preview) = &model.session_result_preview {
-        render_session_result_preview_overlay(frame, area, preview);
+        render_session_result_preview_overlay(frame, content_area, preview);
     }
+}
+
+fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
+    let bar_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+
+    let bg = Color::DarkGray;
+    let base_style = Style::default().fg(Color::White).bg(bg);
+    let hint_style = Style::default().fg(Color::Gray).bg(bg);
+    let menu_open = model.system_menu.is_some();
+    let system_style = if menu_open {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(Color::White)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD)
+    };
+
+    let system_label = " 📦 System ";
+    let hint = "(F2)";
+
+    let used_width =
+        UnicodeWidthStr::width(system_label) + UnicodeWidthStr::width("  ") + UnicodeWidthStr::width(hint);
+    let remaining = (bar_area.width as usize).saturating_sub(used_width);
+
+    let spans = vec![
+        Span::styled(system_label.to_string(), system_style),
+        Span::styled("  ".to_string(), base_style),
+        Span::styled(hint.to_string(), hint_style),
+        Span::styled(" ".repeat(remaining), base_style),
+    ];
+
+    frame.render_widget(Paragraph::new(Line::from(spans)).style(base_style), bar_area);
+}
+
+fn render_system_menu_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    menu: &crate::app::SystemMenuOverlay,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let items = crate::app::SYSTEM_MENU_ITEMS;
+    let max_label_width = items
+        .iter()
+        .map(|item| UnicodeWidthStr::width(item.label()))
+        .max()
+        .unwrap_or(0);
+    let max_hotkey_width = items
+        .iter()
+        .map(|item| UnicodeWidthStr::width(item.hotkey()))
+        .max()
+        .unwrap_or(0);
+
+    let inner_width = max_label_width
+        .saturating_add(2)
+        .saturating_add(max_hotkey_width)
+        .max(18);
+    let desired_width = inner_width.saturating_add(4);
+
+    let popup_width = (desired_width as u16).min(area.width);
+    let popup_height = (items.len() as u16).saturating_add(2).min(area.height);
+    let popup = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .title("📦 System");
+
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let mut list_items: Vec<ListItem> = Vec::new();
+    for item in items {
+        let label = item.label();
+        let hotkey = item.hotkey();
+
+        let label_width = UnicodeWidthStr::width(label);
+        let hotkey_width = UnicodeWidthStr::width(hotkey);
+        let gap = 2usize;
+
+        let inner_width = inner.width as usize;
+        if inner_width == 0 {
+            list_items.push(ListItem::new(Line::from("")));
+            continue;
+        }
+
+        let min_needed = label_width.saturating_add(gap).saturating_add(hotkey_width);
+        if inner_width <= min_needed {
+            let text = truncate_end(&format!("{label} {hotkey}"), inner_width);
+            list_items.push(ListItem::new(Line::from(text)));
+            continue;
+        }
+
+        let padding = inner_width.saturating_sub(label_width + gap + hotkey_width);
+        list_items.push(ListItem::new(Line::from(vec![
+            Span::raw(label.to_string()),
+            Span::raw(" ".repeat(gap + padding)),
+            Span::styled(hotkey.to_string(), Style::default().fg(Color::DarkGray)),
+        ])));
+    }
+
+    let list = List::new(list_items)
+        .highlight_style(
+            Style::default()
+                .add_modifier(Modifier::REVERSED)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("");
+
+    let mut state = ListState::default();
+    state.select(Some(menu.selected.min(items.len().saturating_sub(1))));
+    frame.render_stateful_widget(list, inner, &mut state);
 }
 
 fn render_error(frame: &mut Frame, area: Rect, model: &AppModel) {
@@ -1208,7 +1363,7 @@ fn session_detail_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let mut parts = vec![
-        "Keys: arrows=move  PgUp/PgDn=page  Enter=details  (Tool: Enter again=ToolOut)  o=result  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help".to_string(),
+        "Keys: arrows=move  PgUp/PgDn=page  Enter=ToolOut (Tool)  o=result  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help".to_string(),
         format!("items: {item_count}"),
     ];
     if truncated {
@@ -1456,7 +1611,6 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
     let key_style = Style::default().fg(Color::DarkGray);
     let value_style = Style::default();
     let summary_style = Style::default().add_modifier(Modifier::BOLD);
-    let hint_style = Style::default().fg(Color::DarkGray);
 
     let mut text = Text::default();
     text.lines.push(Line::from(vec![
@@ -1490,11 +1644,7 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
     }
     text.lines.push(Line::from(""));
 
-    let max = if detail_view.show_details {
-        12_000
-    } else {
-        600
-    };
+    let max = 12_000;
 
     if item.kind == TimelineItemKind::ToolCall {
         if let Some(call_id) = item.call_id.as_deref() {
@@ -1519,13 +1669,6 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
                 text.lines.extend(render_plain_highlight_lines(
                     truncate_chars(&item.detail, max).as_str(),
                 ));
-                if !detail_view.show_details {
-                    text.lines.push(Line::from(""));
-                    text.lines.push(Line::from(Span::styled(
-                        "(Press Enter to toggle details)",
-                        hint_style,
-                    )));
-                }
                 return text;
             }
         }
@@ -1534,14 +1677,6 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
     let truncated = truncate_chars(&item.detail, max);
     text.lines
         .extend(render_detail_lines_for_kind(item.kind, &truncated));
-    if !detail_view.show_details {
-        text.lines.push(Line::from(""));
-        text.lines.push(Line::from(Span::styled(
-            "(Press Enter to toggle details)",
-            hint_style,
-        )));
-    }
-
     text
 }
 
@@ -2278,12 +2413,13 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("Navigation"),
         Line::from("  - Arrows: move selection"),
         Line::from("  - PgUp/PgDn: page up/down"),
-        Line::from("  - Enter: open / toggle details"),
+        Line::from("  - Enter: open"),
         Line::from("  - Esc: back / close windows"),
         Line::from("  - Delete confirm: ←/→ choose, Enter confirms (Esc cancels)"),
         Line::from(""),
         Line::from("Global"),
         Line::from("  - Ctrl+R: rescan sessions"),
+        Line::from("  - F2: system menu"),
         Line::from("  - P: processes"),
         Line::from("  - Auto-rescan: watches sessions dir"),
         Line::from("  - Ctrl+Q or Ctrl+C: quit"),
@@ -2297,6 +2433,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - New Session: Ctrl+Enter/Cmd+Enter sends, Shift+Tab switches engine"),
         Line::from("  - Projects/Sessions: ● indicates online"),
         Line::from("  - Session Detail: o shows Result (last Out)"),
+        Line::from("  - Session Detail: Enter jumps to ToolOut for Tool calls"),
         Line::from("  - Session Detail: c toggles Visible Context"),
         Line::from("  - Processes: s/e/l=open output, k=kill, Enter=open session"),
         Line::from(""),

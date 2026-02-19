@@ -63,6 +63,7 @@ pub struct AppModel {
     pub notice: Option<String>,
     pub update_hint: Option<String>,
     pub help_open: bool,
+    pub system_menu: Option<SystemMenuOverlay>,
     pub delete_confirm: Option<DeleteConfirmDialog>,
     pub delete_session_confirm: Option<DeleteSessionConfirmDialog>,
     pub session_result_preview: Option<SessionResultPreviewOverlay>,
@@ -83,6 +84,7 @@ impl AppModel {
             notice: None,
             update_hint: None,
             help_open: false,
+            system_menu: None,
             delete_confirm: None,
             delete_session_confirm: None,
             session_result_preview: None,
@@ -99,6 +101,7 @@ impl AppModel {
                 notice: None,
                 update_hint: self.update_hint.clone(),
                 help_open: self.help_open,
+                system_menu: self.system_menu.clone(),
                 delete_confirm: self.delete_confirm.clone(),
                 delete_session_confirm: self.delete_session_confirm.clone(),
                 session_result_preview: self.session_result_preview.clone(),
@@ -226,6 +229,7 @@ impl AppModel {
             notice: None,
             update_hint: self.update_hint.clone(),
             help_open: self.help_open,
+            system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
@@ -241,6 +245,7 @@ impl AppModel {
             notice: self.notice.clone(),
             update_hint: self.update_hint.clone(),
             help_open: self.help_open,
+            system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
@@ -256,6 +261,7 @@ impl AppModel {
             notice,
             update_hint: self.update_hint.clone(),
             help_open: self.help_open,
+            system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
@@ -284,6 +290,7 @@ impl AppModel {
             notice: None,
             update_hint: self.update_hint.clone(),
             help_open: self.help_open,
+            system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
@@ -296,7 +303,6 @@ impl AppModel {
                 warnings,
                 truncated,
                 selected: 0,
-                show_details: false,
                 context_overlay_open: false,
                 last_output: last_output.clone(),
                 output_overlay_open: false,
@@ -311,6 +317,46 @@ pub struct SessionResultPreviewOverlay {
     pub session_title: String,
     pub output: String,
     pub scroll: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SystemMenuItem {
+    Rescan,
+    Processes,
+    Help,
+    Quit,
+}
+
+impl SystemMenuItem {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rescan => "Rescan sessions",
+            Self::Processes => "Processes",
+            Self::Help => "Help",
+            Self::Quit => "Quit",
+        }
+    }
+
+    pub fn hotkey(self) -> &'static str {
+        match self {
+            Self::Rescan => "Ctrl+R",
+            Self::Processes => "P",
+            Self::Help => "F1 or ?",
+            Self::Quit => "Ctrl+Q or Ctrl+C",
+        }
+    }
+}
+
+pub const SYSTEM_MENU_ITEMS: [SystemMenuItem; 4] = [
+    SystemMenuItem::Rescan,
+    SystemMenuItem::Processes,
+    SystemMenuItem::Help,
+    SystemMenuItem::Quit,
+];
+
+#[derive(Clone, Debug)]
+pub struct SystemMenuOverlay {
+    pub selected: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -465,7 +511,6 @@ pub struct SessionDetailView {
     pub warnings: usize,
     pub truncated: bool,
     pub selected: usize,
-    pub show_details: bool,
     pub context_overlay_open: bool,
     pub last_output: Option<String>,
     pub output_overlay_open: bool,
@@ -569,6 +614,27 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         return (model, AppCommand::Rescan);
     }
 
+    if matches!(key.code, KeyCode::F(2)) {
+        if model.delete_confirm.is_some()
+            || model.delete_session_confirm.is_some()
+            || model.session_result_preview.is_some()
+        {
+            return (model, AppCommand::None);
+        }
+
+        if model.system_menu.is_some() {
+            model.system_menu = None;
+        } else {
+            model.system_menu = Some(SystemMenuOverlay { selected: 0 });
+            model.help_open = false;
+        }
+        return (model, AppCommand::None);
+    }
+
+    if let Some(menu) = model.system_menu.take() {
+        return update_system_menu_overlay(model, menu, key);
+    }
+
     if let Some(preview) = model.session_result_preview.take() {
         return update_session_result_preview_overlay(model, preview, key);
     }
@@ -599,11 +665,7 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
     if key.code == KeyCode::Char('P')
         && !matches!(&model.view, View::Processes(_) | View::ProcessOutput(_))
     {
-        let return_to = model.view.clone();
-        model.view = View::Processes(ProcessesView {
-            return_to: Box::new(return_to),
-            selected: 0,
-        });
+        open_processes_view(&mut model);
         return (model, AppCommand::None);
     }
 
@@ -619,10 +681,67 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
     }
 }
 
+fn update_system_menu_overlay(
+    mut model: AppModel,
+    mut menu: SystemMenuOverlay,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Backspace => {
+            model.system_menu = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Up => {
+            menu.selected = menu.selected.saturating_sub(1);
+        }
+        KeyCode::Down => {
+            menu.selected = (menu.selected + 1).min(SYSTEM_MENU_ITEMS.len().saturating_sub(1));
+        }
+        KeyCode::Enter => {
+            let Some(item) = SYSTEM_MENU_ITEMS.get(menu.selected).copied() else {
+                model.system_menu = None;
+                return (model, AppCommand::None);
+            };
+
+            model.system_menu = None;
+
+            match item {
+                SystemMenuItem::Rescan => return (model, AppCommand::Rescan),
+                SystemMenuItem::Processes => {
+                    if !matches!(&model.view, View::Processes(_) | View::ProcessOutput(_)) {
+                        open_processes_view(&mut model);
+                    }
+                    return (model, AppCommand::None);
+                }
+                SystemMenuItem::Help => {
+                    model.help_open = true;
+                    return (model, AppCommand::None);
+                }
+                SystemMenuItem::Quit => return (model, AppCommand::Quit),
+            }
+        }
+        _ => {}
+    }
+
+    model.system_menu = Some(menu);
+    (model, AppCommand::None)
+}
+
+fn open_processes_view(model: &mut AppModel) {
+    let return_to = model.view.clone();
+    model.view = View::Processes(ProcessesView {
+        return_to: Box::new(return_to),
+        selected: 0,
+    });
+}
+
 fn update_on_paste(model: AppModel, text: String) -> (AppModel, AppCommand) {
     let mut model = model;
     model.notice = None;
 
+    if model.system_menu.is_some() {
+        return (model, AppCommand::None);
+    }
     if model.help_open {
         return (model, AppCommand::None);
     }
@@ -770,6 +889,7 @@ fn update_error(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                 notice: None,
                 update_hint: model.update_hint.clone(),
                 help_open: model.help_open,
+                system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
@@ -801,6 +921,7 @@ fn update_projects(
                 notice: None,
                 update_hint: model.update_hint.clone(),
                 help_open: model.help_open,
+                system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
@@ -876,6 +997,7 @@ fn update_projects(
             notice: None,
             update_hint: model.update_hint.clone(),
             help_open: model.help_open,
+            system_menu: model.system_menu.clone(),
             delete_confirm: model.delete_confirm.clone(),
             delete_session_confirm: model.delete_session_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
@@ -990,6 +1112,7 @@ fn update_sessions(
                 notice: None,
                 update_hint: model.update_hint.clone(),
                 help_open: model.help_open,
+                system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
@@ -1035,6 +1158,7 @@ fn update_sessions(
                     notice: None,
                     update_hint: model.update_hint.clone(),
                     help_open: model.help_open,
+                    system_menu: model.system_menu.clone(),
                     delete_confirm: model.delete_confirm.clone(),
                     delete_session_confirm: model.delete_session_confirm.clone(),
                     session_result_preview: model.session_result_preview.clone(),
@@ -1051,6 +1175,7 @@ fn update_sessions(
                 notice: None,
                 update_hint: model.update_hint.clone(),
                 help_open: model.help_open,
+                system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
@@ -1078,6 +1203,7 @@ fn update_sessions(
             notice: None,
             update_hint: model.update_hint.clone(),
             help_open: model.help_open,
+            system_menu: model.system_menu.clone(),
             delete_confirm: model.delete_confirm.clone(),
             delete_session_confirm: model.delete_session_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
@@ -1415,29 +1541,24 @@ fn update_session_detail(
             }
         }
         KeyCode::Enter => {
-            if view.show_details {
-                let selected = view.selected.min(view.items.len().saturating_sub(1));
-                if let Some(item) = view.items.get(selected) {
-                    if item.kind == TimelineItemKind::ToolCall {
-                        if let Some(call_id) = item.call_id.as_deref() {
-                            if let Some(output_index) =
-                                find_tool_output_index(&view.items, selected, call_id)
-                            {
-                                view.selected = output_index;
-                            } else {
-                                model.notice = Some(
-                                    "No ToolOut found for the selected Tool call.".to_string(),
-                                );
-                            }
-
-                            model.view = View::SessionDetail(view);
-                            return (model, AppCommand::None);
+            let selected = view.selected.min(view.items.len().saturating_sub(1));
+            if let Some(item) = view.items.get(selected) {
+                if item.kind == TimelineItemKind::ToolCall {
+                    if let Some(call_id) = item.call_id.as_deref() {
+                        if let Some(output_index) =
+                            find_tool_output_index(&view.items, selected, call_id)
+                        {
+                            view.selected = output_index;
+                        } else {
+                            model.notice =
+                                Some("No ToolOut found for the selected Tool call.".to_string());
                         }
+
+                        model.view = View::SessionDetail(view);
+                        return (model, AppCommand::None);
                     }
                 }
             }
-
-            view.show_details = !view.show_details;
         }
         KeyCode::Char('o') | KeyCode::Char('O') => {
             if view.last_output.is_some() {
