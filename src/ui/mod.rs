@@ -2719,7 +2719,17 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
     let popup = centered_rect(74, 70, area);
     frame.render_widget(Clear, popup);
 
+    let title = format!("{} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
     let text = vec![
+        Line::from(vec![Span::styled(
+            title,
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
+        Line::from("Manage coding-agent sessions (Codex + Claude)."),
+        Line::from(
+            "Browse projects/sessions, view timelines, spawn sessions, and keep ccbox updated.",
+        ),
+        Line::from(""),
         Line::from("Navigation"),
         Line::from("  - Arrows: move selection"),
         Line::from("  - PgUp/PgDn: page up/down"),
