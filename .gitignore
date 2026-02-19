@@ -1,5 +1,10 @@
 /target
 /.idea
 /.vscode
-/.agents/
+# Local agent artifacts (keep design docs/tasks in repo)
+/.agents/*
+!/.agents/designs/
+!/.agents/designs/**
+!/.agents/tasks/
+!/.agents/tasks/**
 .DS_Store
