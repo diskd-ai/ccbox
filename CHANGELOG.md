@@ -9,6 +9,7 @@ All notable user-facing changes to `ccbox` are documented in this file.
 - TUI: add a System menu (`F2`) for global actions.
 - TUI: session timeline details are always expanded; `Enter` now only jumps Tool -> ToolOut.
 - TUI: highlight update-available hint in light green.
+- TUI: pretty-print JSON in the timeline details view.
 
 ## [0.1.3] - 2026-02-19
 

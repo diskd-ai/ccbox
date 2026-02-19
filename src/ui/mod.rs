@@ -11,6 +11,26 @@ use time::format_description::well_known::Rfc3339;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
+fn render_json_pretty_highlight_lines(text: &str) -> Vec<Line<'static>> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return vec![Line::from("")];
+    }
+
+    const JSON_PRETTY_PARSE_LIMIT: usize = 200_000;
+    if trimmed.len() > JSON_PRETTY_PARSE_LIMIT {
+        return render_json_highlight_lines(text);
+    }
+
+    match serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .and_then(|value| serde_json::to_string_pretty(&value).ok())
+    {
+        Some(pretty) => render_json_highlight_lines(&pretty),
+        None => render_json_highlight_lines(text),
+    }
+}
+
 pub fn render(frame: &mut Frame, model: &AppModel) {
     let full_area = frame.area();
     if full_area.width == 0 || full_area.height == 0 {
@@ -1713,13 +1733,13 @@ fn render_detail_lines_for_kind(kind: TimelineItemKind, text: &str) -> Vec<Line<
 
 fn render_plain_highlight_lines(text: &str) -> Vec<Line<'static>> {
     if is_jsonish(text) {
-        return render_json_highlight_lines(text);
+        return render_json_pretty_highlight_lines(text);
     }
 
     text.split('\n')
         .flat_map(|raw_line| {
             if is_jsonish(raw_line) {
-                return render_json_highlight_lines(raw_line);
+                return render_json_pretty_highlight_lines(raw_line);
             }
 
             let trimmed = raw_line.trim_start();
@@ -1747,7 +1767,7 @@ fn render_markdownish_lines(text: &str) -> Vec<Line<'static>> {
 
         if in_code_block {
             if is_jsonish(trimmed) {
-                lines.extend(render_json_highlight_lines(raw_line));
+                lines.extend(render_json_pretty_highlight_lines(raw_line));
                 continue;
             }
 
@@ -1762,7 +1782,7 @@ fn render_markdownish_lines(text: &str) -> Vec<Line<'static>> {
         }
 
         if is_jsonish(trimmed) {
-            lines.extend(render_json_highlight_lines(raw_line));
+            lines.extend(render_json_pretty_highlight_lines(raw_line));
             continue;
         }
 
