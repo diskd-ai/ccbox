@@ -2,7 +2,7 @@ use crate::app::{AppModel, DeleteConfirmSelection, SessionDetailFocus, View};
 use crate::domain::{TimelineItem, TimelineItemKind, TurnContextSummary};
 use humansize::{DECIMAL, format_size};
 use ratatui::prelude::*;
-use ratatui::widgets::block::Title;
+use ratatui::widgets::block::{BorderType, Title};
 use ratatui::widgets::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -1520,6 +1520,17 @@ fn render_session_detail(
     let unfocused_border_style = Style::default().fg(Color::DarkGray);
     let focused = detail_view.focus;
 
+    let timeline_border_type = if focused == SessionDetailFocus::Timeline {
+        BorderType::Double
+    } else {
+        BorderType::Plain
+    };
+    let details_border_type = if focused == SessionDetailFocus::Details {
+        BorderType::Double
+    } else {
+        BorderType::Plain
+    };
+
     let timeline_border_style = if focused == SessionDetailFocus::Timeline {
         focused_border_style
     } else {
@@ -1563,6 +1574,7 @@ fn render_session_detail(
         .borders(Borders::ALL)
         .padding(Padding::horizontal(1))
         .border_style(timeline_border_style)
+        .border_type(timeline_border_type)
         .title(Title::from(Span::styled("Timeline", timeline_title_style)));
     let list_inner = list_block.inner(list_area);
     let list = List::new(list_items)
@@ -1615,6 +1627,7 @@ fn render_session_detail(
         .borders(Borders::ALL)
         .padding(Padding::horizontal(1))
         .border_style(details_border_style)
+        .border_type(details_border_type)
         .title(Title::from(Span::styled("Details", details_title_style)));
     let detail_inner = detail_block.inner(detail_area);
     let detail_viewport = detail_inner.height as usize;
