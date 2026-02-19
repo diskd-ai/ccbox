@@ -1,7 +1,8 @@
-use crate::app::{AppModel, DeleteConfirmSelection, View};
+use crate::app::{AppModel, DeleteConfirmSelection, SessionDetailFocus, View};
 use crate::domain::{TimelineItem, TimelineItemKind, TurnContextSummary};
 use humansize::{DECIMAL, format_size};
 use ratatui::prelude::*;
+use ratatui::widgets::block::Title;
 use ratatui::widgets::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -1488,6 +1489,32 @@ fn render_session_detail(
     let list_area = panels[0];
     let detail_area = panels[1];
 
+    let focused_border_style = Style::default()
+        .fg(Color::LightBlue)
+        .add_modifier(Modifier::BOLD);
+    let focused = detail_view.focus;
+
+    let timeline_border_style = if focused == SessionDetailFocus::Timeline {
+        focused_border_style
+    } else {
+        Style::default()
+    };
+    let details_border_style = if focused == SessionDetailFocus::Details {
+        focused_border_style
+    } else {
+        Style::default()
+    };
+    let timeline_title_style = if focused == SessionDetailFocus::Timeline {
+        focused_border_style
+    } else {
+        Style::default().add_modifier(Modifier::BOLD)
+    };
+    let details_title_style = if focused == SessionDetailFocus::Details {
+        focused_border_style
+    } else {
+        Style::default().add_modifier(Modifier::BOLD)
+    };
+
     let max_width = (list_area.width as usize).saturating_sub(6);
     let TimelineRenderColumns {
         offset_col_width,
@@ -1506,13 +1533,14 @@ fn render_session_detail(
         })
         .collect::<Vec<_>>();
 
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .border_style(timeline_border_style)
+        .title(Title::from(Span::styled("Timeline", timeline_title_style)));
+    let list_inner = list_block.inner(list_area);
     let list = List::new(list_items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .padding(Padding::horizontal(1))
-                .title("Timeline"),
-        )
+        .block(list_block)
         .highlight_style(
             Style::default()
                 .fg(Color::Yellow)
@@ -1530,17 +1558,74 @@ fn render_session_detail(
     }
     frame.render_stateful_widget(list, list_area, &mut state);
 
-    let detail_text = build_item_detail_text(detail_view);
-    let detail_paragraph = Paragraph::new(detail_text)
-        .wrap(Wrap { trim: false })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .padding(Padding::horizontal(1))
-                .title("Details"),
+    let list_viewport = list_inner.height as usize;
+    let list_total = detail_view.items.len();
+    if list_total > list_viewport && list_viewport > 0 {
+        let scrollbar_style = if focused == SessionDetailFocus::Timeline {
+            Style::default().fg(Color::LightBlue)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .thumb_style(scrollbar_style)
+            .track_style(Style::default().fg(Color::DarkGray))
+            .begin_style(scrollbar_style)
+            .end_style(scrollbar_style);
+        let mut scrollbar_state = ScrollbarState::new(list_total)
+            .position(state.offset())
+            .viewport_content_length(list_viewport);
+        frame.render_stateful_widget(
+            scrollbar,
+            list_area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
         );
+    }
+
+    let detail_text = build_item_detail_text(detail_view);
+    let detail_block = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .border_style(details_border_style)
+        .title(Title::from(Span::styled("Details", details_title_style)));
+    let detail_inner = detail_block.inner(detail_area);
+    let detail_viewport = detail_inner.height as usize;
+    let detail_total = detail_text.height();
+    let max_scroll = detail_total.saturating_sub(detail_viewport);
+    let scroll = (detail_view.details_scroll as usize).min(max_scroll);
+    let scroll_u16 = u16::try_from(scroll).unwrap_or(u16::MAX);
+    let detail_paragraph = Paragraph::new(detail_text)
+        .scroll((scroll_u16, 0))
+        .wrap(Wrap { trim: false })
+        .block(detail_block);
     frame.render_widget(Clear, detail_area);
     frame.render_widget(detail_paragraph, detail_area);
+
+    if detail_total > detail_viewport && detail_viewport > 0 {
+        let scrollbar_style = if focused == SessionDetailFocus::Details {
+            Style::default().fg(Color::LightBlue)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .thumb_style(scrollbar_style)
+            .track_style(Style::default().fg(Color::DarkGray))
+            .begin_style(scrollbar_style)
+            .end_style(scrollbar_style);
+        let mut scrollbar_state = ScrollbarState::new(detail_total)
+            .position(scroll)
+            .viewport_content_length(detail_viewport);
+        frame.render_stateful_widget(
+            scrollbar,
+            detail_area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
+        );
+    }
 
     let footer = session_detail_footer_line(
         model.data.warnings.get(),
@@ -1572,7 +1657,8 @@ fn session_detail_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let mut parts = vec![
-        "Keys: arrows=move  PgUp/PgDn=page  Enter=ToolOut (Tool)  o=result  F3=stats  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help".to_string(),
+        "Keys: Tab=focus  arrows=move/scroll  PgUp/PgDn=page  Enter=ToolOut (Tool)  o=result  F3=stats  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+            .to_string(),
         format!("items: {item_count}"),
     ];
     if truncated {
@@ -2798,6 +2884,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - Sessions: F3 shows Stats"),
         Line::from("  - New Session: Ctrl+Enter/Cmd+Enter sends, Shift+Tab switches engine"),
         Line::from("  - Projects/Sessions: ● indicates online"),
+        Line::from("  - Session Detail: Tab switches focus (Timeline / Details)"),
         Line::from("  - Session Detail: o shows Result (last Out)"),
         Line::from("  - Session Detail: F3 shows Stats"),
         Line::from("  - Session Detail: Enter jumps to ToolOut for Tool calls"),

@@ -348,6 +348,8 @@ impl AppModel {
                 warnings,
                 truncated,
                 selected: 0,
+                focus: SessionDetailFocus::Timeline,
+                details_scroll: 0,
                 context_overlay_open: false,
                 last_output: last_output.clone(),
                 output_overlay_open: false,
@@ -901,6 +903,21 @@ impl NewSessionView {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionDetailFocus {
+    Timeline,
+    Details,
+}
+
+impl SessionDetailFocus {
+    fn toggle(self) -> Self {
+        match self {
+            Self::Timeline => Self::Details,
+            Self::Details => Self::Timeline,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SessionDetailView {
     pub from_sessions: SessionsView,
@@ -910,6 +927,8 @@ pub struct SessionDetailView {
     pub warnings: usize,
     pub truncated: bool,
     pub selected: usize,
+    pub focus: SessionDetailFocus,
+    pub details_scroll: u16,
     pub context_overlay_open: bool,
     pub last_output: Option<String>,
     pub output_overlay_open: bool,
@@ -2074,6 +2093,9 @@ fn update_session_detail(
     }
 
     match key.code {
+        KeyCode::Tab | KeyCode::BackTab => {
+            view.focus = view.focus.toggle();
+        }
         KeyCode::Esc | KeyCode::Backspace => {
             if view.context_overlay_open {
                 view.context_overlay_open = false;
@@ -2090,24 +2112,50 @@ fn update_session_detail(
                 },
             );
         }
-        KeyCode::Up => {
-            view.selected = view.selected.saturating_sub(1);
-        }
-        KeyCode::Down => {
-            if !view.items.is_empty() {
-                view.selected = (view.selected + 1).min(view.items.len().saturating_sub(1));
+        KeyCode::Up => match view.focus {
+            SessionDetailFocus::Timeline => {
+                view.selected = view.selected.saturating_sub(1);
+                view.details_scroll = 0;
             }
-        }
-        KeyCode::PageUp => {
-            let step = page_step_session_detail_list(model.terminal_size);
-            view.selected = view.selected.saturating_sub(step);
-        }
-        KeyCode::PageDown => {
-            if !view.items.is_empty() {
+            SessionDetailFocus::Details => {
+                view.details_scroll = view.details_scroll.saturating_sub(1);
+            }
+        },
+        KeyCode::Down => match view.focus {
+            SessionDetailFocus::Timeline => {
+                if !view.items.is_empty() {
+                    view.selected = (view.selected + 1).min(view.items.len().saturating_sub(1));
+                }
+                view.details_scroll = 0;
+            }
+            SessionDetailFocus::Details => {
+                view.details_scroll = view.details_scroll.saturating_add(1);
+            }
+        },
+        KeyCode::PageUp => match view.focus {
+            SessionDetailFocus::Timeline => {
                 let step = page_step_session_detail_list(model.terminal_size);
-                view.selected = (view.selected + step).min(view.items.len().saturating_sub(1));
+                view.selected = view.selected.saturating_sub(step);
+                view.details_scroll = 0;
             }
-        }
+            SessionDetailFocus::Details => {
+                let step = page_step_session_detail_details(model.terminal_size) as u16;
+                view.details_scroll = view.details_scroll.saturating_sub(step);
+            }
+        },
+        KeyCode::PageDown => match view.focus {
+            SessionDetailFocus::Timeline => {
+                if !view.items.is_empty() {
+                    let step = page_step_session_detail_list(model.terminal_size);
+                    view.selected = (view.selected + step).min(view.items.len().saturating_sub(1));
+                }
+                view.details_scroll = 0;
+            }
+            SessionDetailFocus::Details => {
+                let step = page_step_session_detail_details(model.terminal_size) as u16;
+                view.details_scroll = view.details_scroll.saturating_add(step);
+            }
+        },
         KeyCode::Enter => {
             let selected = view.selected.min(view.items.len().saturating_sub(1));
             if let Some(item) = view.items.get(selected) {
@@ -2117,6 +2165,7 @@ fn update_session_detail(
                             find_tool_output_index(&view.items, selected, call_id)
                         {
                             view.selected = output_index;
+                            view.details_scroll = 0;
                         } else {
                             model.notice =
                                 Some("No ToolOut found for the selected Tool call.".to_string());
@@ -2209,6 +2258,21 @@ fn page_step_session_detail_list(terminal_size: (u16, u16)) -> usize {
     };
 
     page_step_for_height(list_height)
+}
+
+fn page_step_session_detail_details(terminal_size: (u16, u16)) -> usize {
+    let (inner_width, inner_height) = inner_terminal_size(terminal_size);
+    let body_height = inner_height.saturating_sub(4); // header 3 + footer 1
+
+    let details_height = if inner_width >= 90 {
+        body_height
+    } else {
+        let body_height = u32::from(body_height);
+        u16::try_from((body_height * 40) / 100).unwrap_or(0)
+    };
+
+    let viewport_height = details_height.saturating_sub(2);
+    page_step_for_height(viewport_height)
 }
 
 pub fn build_index_from_sessions(
