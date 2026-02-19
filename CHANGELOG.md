@@ -9,6 +9,14 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.9] - 2026-02-19
+
+### Changes
+
+- Docs: update README keybindings and the roadmap checklists.
+
+### Fixes
+
 ## [0.1.8] - 2026-02-19
 
 ### Changes
