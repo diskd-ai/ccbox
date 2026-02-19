@@ -430,6 +430,9 @@ impl ProjectStatsOverlay {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MainMenu {
     System,
+    /// Requirement: every distinct screen/window should be reachable from the Window menu.
+    /// When adding a new `View` variant or a new popup window, add a Window menu entry.
+    Window,
     Projects,
     Sessions,
     NewSession,
@@ -443,6 +446,7 @@ impl MainMenu {
     pub fn label(self) -> &'static str {
         match self {
             Self::System => "System",
+            Self::Window => "Window",
             Self::Projects => "Projects",
             Self::Sessions => "Sessions",
             Self::NewSession => "New Session",
@@ -522,6 +526,89 @@ pub const MAIN_MENU_SYSTEM_ITEMS: [MainMenuEntry; 7] = [
         key: MainMenuKey {
             code: KeyCode::Char('q'),
             modifiers: KeyModifiers::CONTROL,
+        },
+    },
+];
+
+pub const MAIN_MENU_WINDOW_ITEMS: [MainMenuEntry; 10] = [
+    MainMenuEntry {
+        label: "Projects",
+        hotkey: "Ctrl+1 or Cmd+1",
+        key: MainMenuKey {
+            code: KeyCode::Char('1'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Sessions",
+        hotkey: "Ctrl+2 or Cmd+2",
+        key: MainMenuKey {
+            code: KeyCode::Char('2'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Session Detail",
+        hotkey: "Enter",
+        key: MainMenuKey {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "New Session",
+        hotkey: "Ctrl+N or Cmd+N",
+        key: MainMenuKey {
+            code: KeyCode::Char('n'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Processes",
+        hotkey: "Ctrl+3 or Cmd+3",
+        key: MainMenuKey {
+            code: KeyCode::Char('3'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Output: stdout",
+        hotkey: "s",
+        key: MainMenuKey {
+            code: KeyCode::Char('s'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Output: stderr",
+        hotkey: "e",
+        key: MainMenuKey {
+            code: KeyCode::Char('e'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Output: log",
+        hotkey: "l",
+        key: MainMenuKey {
+            code: KeyCode::Char('l'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Statistics",
+        hotkey: "F3",
+        key: MainMenuKey {
+            code: KeyCode::F(3),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Help",
+        hotkey: "F1 or ?",
+        key: MainMenuKey {
+            code: KeyCode::F(1),
+            modifiers: KeyModifiers::NONE,
         },
     },
 ];
@@ -803,13 +890,19 @@ pub const MAIN_MENU_ERROR_ITEMS: [MainMenuEntry; 2] = [
     },
 ];
 
-pub const MAIN_MENUS_PROJECTS: [MainMenu; 2] = [MainMenu::System, MainMenu::Projects];
-pub const MAIN_MENUS_SESSIONS: [MainMenu; 2] = [MainMenu::System, MainMenu::Sessions];
-pub const MAIN_MENUS_NEW_SESSION: [MainMenu; 2] = [MainMenu::System, MainMenu::NewSession];
-pub const MAIN_MENUS_SESSION_DETAIL: [MainMenu; 2] = [MainMenu::System, MainMenu::Session];
-pub const MAIN_MENUS_PROCESSES: [MainMenu; 2] = [MainMenu::System, MainMenu::Processes];
-pub const MAIN_MENUS_PROCESS_OUTPUT: [MainMenu; 2] = [MainMenu::System, MainMenu::ProcessOutput];
-pub const MAIN_MENUS_ERROR: [MainMenu; 2] = [MainMenu::System, MainMenu::Error];
+pub const MAIN_MENUS_PROJECTS: [MainMenu; 3] =
+    [MainMenu::System, MainMenu::Window, MainMenu::Projects];
+pub const MAIN_MENUS_SESSIONS: [MainMenu; 3] =
+    [MainMenu::System, MainMenu::Window, MainMenu::Sessions];
+pub const MAIN_MENUS_NEW_SESSION: [MainMenu; 3] =
+    [MainMenu::System, MainMenu::Window, MainMenu::NewSession];
+pub const MAIN_MENUS_SESSION_DETAIL: [MainMenu; 3] =
+    [MainMenu::System, MainMenu::Window, MainMenu::Session];
+pub const MAIN_MENUS_PROCESSES: [MainMenu; 3] =
+    [MainMenu::System, MainMenu::Window, MainMenu::Processes];
+pub const MAIN_MENUS_PROCESS_OUTPUT: [MainMenu; 3] =
+    [MainMenu::System, MainMenu::Window, MainMenu::ProcessOutput];
+pub const MAIN_MENUS_ERROR: [MainMenu; 3] = [MainMenu::System, MainMenu::Window, MainMenu::Error];
 
 pub fn main_menus_for_view(view: &View) -> &'static [MainMenu] {
     match view {
@@ -826,6 +919,7 @@ pub fn main_menus_for_view(view: &View) -> &'static [MainMenu] {
 pub fn main_menu_items(menu: MainMenu) -> &'static [MainMenuEntry] {
     match menu {
         MainMenu::System => &MAIN_MENU_SYSTEM_ITEMS,
+        MainMenu::Window => &MAIN_MENU_WINDOW_ITEMS,
         MainMenu::Projects => &MAIN_MENU_PROJECTS_ITEMS,
         MainMenu::Sessions => &MAIN_MENU_SESSIONS_ITEMS,
         MainMenu::NewSession => &MAIN_MENU_NEW_SESSION_ITEMS,
@@ -1124,6 +1218,68 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
         return (model, AppCommand::Rescan);
     }
+
+    if command_modifier && matches!(key.code, KeyCode::Char('1')) {
+        if model.help_open
+            || model.system_menu.is_some()
+            || model.delete_confirm.is_some()
+            || model.delete_session_confirm.is_some()
+            || model.session_result_preview.is_some()
+            || model.session_stats_overlay.is_some()
+            || model.project_stats_overlay.is_some()
+        {
+            return (model, AppCommand::None);
+        }
+
+        model.view = View::Projects(ProjectsView::new(&model.data.projects));
+        model.help_open = false;
+        model.system_menu = None;
+        return (model, AppCommand::None);
+    }
+
+    if command_modifier && matches!(key.code, KeyCode::Char('2')) {
+        if model.help_open
+            || model.system_menu.is_some()
+            || model.delete_confirm.is_some()
+            || model.delete_session_confirm.is_some()
+            || model.session_result_preview.is_some()
+            || model.session_stats_overlay.is_some()
+            || model.project_stats_overlay.is_some()
+        {
+            return (model, AppCommand::None);
+        }
+
+        let Some(sessions_view) = infer_sessions_view_for_window_menu(&model) else {
+            model.notice = Some("No project selected.".to_string());
+            return (model, AppCommand::None);
+        };
+
+        model.view = View::Sessions(sessions_view);
+        model.help_open = false;
+        model.system_menu = None;
+        return (model, AppCommand::None);
+    }
+
+    if command_modifier && matches!(key.code, KeyCode::Char('3')) {
+        if model.help_open
+            || model.system_menu.is_some()
+            || model.delete_confirm.is_some()
+            || model.delete_session_confirm.is_some()
+            || model.session_result_preview.is_some()
+            || model.session_stats_overlay.is_some()
+            || model.project_stats_overlay.is_some()
+        {
+            return (model, AppCommand::None);
+        }
+
+        if !matches!(&model.view, View::Processes(_)) {
+            open_processes_view(&mut model);
+        }
+        model.help_open = false;
+        model.system_menu = None;
+        return (model, AppCommand::None);
+    }
+
     if command_modifier && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
         if model.help_open
             || model.system_menu.is_some()
@@ -1253,6 +1409,89 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
     }
 }
 
+fn infer_sessions_view_for_window_menu(model: &AppModel) -> Option<SessionsView> {
+    infer_sessions_view_for_window_menu_view(&model.view, model)
+}
+
+fn infer_sessions_view_for_window_menu_view(view: &View, model: &AppModel) -> Option<SessionsView> {
+    match view {
+        View::Projects(projects_view) => {
+            let project_index = projects_view
+                .filtered_indices
+                .get(projects_view.selected)
+                .copied()?;
+            let project = model.data.projects.get(project_index)?;
+            Some(SessionsView::new(
+                project.project_path.clone(),
+                project.sessions.len(),
+            ))
+        }
+        View::Sessions(sessions_view) => Some(sessions_view.clone()),
+        View::NewSession(new_session_view) => Some(new_session_view.from_sessions.clone()),
+        View::SessionDetail(detail_view) => Some(detail_view.from_sessions.clone()),
+        View::Processes(processes_view) => {
+            infer_sessions_view_for_window_menu_view(processes_view.return_to.as_ref(), model)
+        }
+        View::ProcessOutput(output_view) => {
+            infer_sessions_view_for_window_menu_view(output_view.return_to.as_ref(), model)
+        }
+        View::Error => None,
+    }
+}
+
+fn infer_session_detail_target(model: &AppModel) -> Option<(SessionsView, SessionSummary)> {
+    infer_session_detail_target_view(&model.view, model)
+}
+
+fn infer_session_detail_target_view(
+    view: &View,
+    model: &AppModel,
+) -> Option<(SessionsView, SessionSummary)> {
+    match view {
+        View::Projects(projects_view) => {
+            let project_index = projects_view
+                .filtered_indices
+                .get(projects_view.selected)
+                .copied()?;
+            let project = model.data.projects.get(project_index)?;
+            let session = project.sessions.first().cloned()?;
+            let from_sessions =
+                SessionsView::new(project.project_path.clone(), project.sessions.len());
+            Some((from_sessions, session))
+        }
+        View::Sessions(sessions_view) => {
+            let project = sessions_view.current_project(&model.data.projects)?;
+            let selected_index = sessions_view
+                .filtered_indices
+                .get(sessions_view.session_selected)
+                .copied()?;
+            let session = project.sessions.get(selected_index).cloned()?;
+            Some((sessions_view.clone(), session))
+        }
+        View::NewSession(new_session_view) => {
+            let from_sessions = new_session_view.from_sessions.clone();
+            let project = from_sessions.current_project(&model.data.projects)?;
+            let selected_index = from_sessions
+                .filtered_indices
+                .get(from_sessions.session_selected)
+                .copied()?;
+            let session = project.sessions.get(selected_index).cloned()?;
+            Some((from_sessions, session))
+        }
+        View::SessionDetail(detail_view) => Some((
+            detail_view.from_sessions.clone(),
+            detail_view.session.clone(),
+        )),
+        View::Processes(processes_view) => {
+            infer_session_detail_target_view(processes_view.return_to.as_ref(), model)
+        }
+        View::ProcessOutput(output_view) => {
+            infer_session_detail_target_view(output_view.return_to.as_ref(), model)
+        }
+        View::Error => None,
+    }
+}
+
 fn update_system_menu_overlay(
     mut model: AppModel,
     mut menu: SystemMenuOverlay,
@@ -1301,6 +1540,10 @@ fn update_system_menu_overlay(
 
             model.system_menu = None;
 
+            if active == MainMenu::Window {
+                return apply_window_menu_entry(model, entry);
+            }
+
             if entry.key.code == KeyCode::F(2) && entry.key.modifiers == KeyModifiers::NONE {
                 return (model, AppCommand::None);
             }
@@ -1313,6 +1556,65 @@ fn update_system_menu_overlay(
 
     model.system_menu = Some(menu);
     (model, AppCommand::None)
+}
+
+fn apply_window_menu_entry(model: AppModel, entry: MainMenuEntry) -> (AppModel, AppCommand) {
+    match entry.label {
+        "Session Detail" => {
+            let mut model = model;
+
+            if matches!(&model.view, View::SessionDetail(_)) {
+                return (model, AppCommand::None);
+            }
+
+            let Some((from_sessions, session)) = infer_session_detail_target(&model) else {
+                model.notice = Some("No session selected.".to_string());
+                return (model, AppCommand::None);
+            };
+
+            model.view = View::Sessions(from_sessions.clone());
+            model.help_open = false;
+            model.system_menu = None;
+
+            (
+                model,
+                AppCommand::OpenSessionDetail {
+                    from_sessions,
+                    session,
+                },
+            )
+        }
+        "Output: stdout" => apply_window_menu_open_output(model, ProcessOutputKind::Stdout),
+        "Output: stderr" => apply_window_menu_open_output(model, ProcessOutputKind::Stderr),
+        "Output: log" => apply_window_menu_open_output(model, ProcessOutputKind::Log),
+        _ => {
+            let key = KeyEvent::new(entry.key.code, entry.key.modifiers);
+            update_on_key(model, key)
+        }
+    }
+}
+
+fn apply_window_menu_open_output(
+    model: AppModel,
+    kind: ProcessOutputKind,
+) -> (AppModel, AppCommand) {
+    let mut model = model;
+
+    let process_id = match &model.view {
+        View::Processes(processes_view) => model
+            .processes
+            .get(processes_view.selected)
+            .map(|process| process.id.clone()),
+        View::ProcessOutput(output_view) => Some(output_view.process_id.clone()),
+        _ => None,
+    };
+
+    let Some(process_id) = process_id else {
+        model.notice = Some("Open Processes to select a process.".to_string());
+        return (model, AppCommand::None);
+    };
+
+    (model, AppCommand::OpenProcessOutput { process_id, kind })
 }
 
 fn open_processes_view(model: &mut AppModel) {

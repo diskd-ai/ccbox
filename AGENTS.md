@@ -60,7 +60,8 @@ CODEX_SESSIONS_DIR=/path/to/sessions cargo run
 
 ## System Menu Guidelines
 
-- Add global actions to the System menu (see `src/app/mod.rs` `SYSTEM_MENU_ITEMS`).
+- Add global actions to the System menu (see `src/app/mod.rs` `MAIN_MENU_SYSTEM_ITEMS`).
+- Requirement: all separate screens/windows must be reachable via the system menu bar `Window` dropdown. When adding a new `View` variant or popup window, add an entry to the Window menu.
 - Prefer view-specific hotkeys for view-specific actions; update the view footer/help text when adding hotkeys.
 
 ## Security & Configuration Tips
