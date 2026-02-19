@@ -61,6 +61,7 @@ ccbox history --full    # auto-selects latest session in that project
 ```bash
 ccbox projects
 ccbox sessions "/abs/path/to/project"
+ccbox history "/abs/path/to/project" --full
 ```
 
 ### Inspect a specific session log

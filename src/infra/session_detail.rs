@@ -30,6 +30,14 @@ pub enum LoadLastAssistantOutputError {
 pub fn load_last_assistant_output(
     path: &Path,
 ) -> Result<LastAssistantOutput, LoadLastAssistantOutputError> {
+    if path.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::IsADirectory,
+            format!("path is a directory: {}", path.display()),
+        )
+        .into());
+    }
+
     let file = File::open(path)?;
     let reader = BufReader::new(file);
 
@@ -42,7 +50,7 @@ pub fn load_last_assistant_output(
             Ok(line) => line,
             Err(_) => {
                 warnings += 1;
-                continue;
+                break;
             }
         };
 
@@ -77,6 +85,14 @@ pub fn load_last_assistant_output(
 }
 
 pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSessionTimelineError> {
+    if path.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::IsADirectory,
+            format!("path is a directory: {}", path.display()),
+        )
+        .into());
+    }
+
     let file = File::open(path)?;
     let reader = BufReader::new(file);
 
@@ -95,7 +111,8 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
             Ok(line) => line,
             Err(_) => {
                 warnings += 1;
-                continue;
+                truncated = true;
+                break;
             }
         };
 
@@ -189,6 +206,7 @@ fn short_id(value: &str) -> String {
 mod tests {
     use super::*;
     use std::fs;
+    use std::io;
     use tempfile::tempdir;
 
     #[test]
@@ -275,5 +293,29 @@ mod tests {
             .expect("token count");
 
         assert!(first_token_index > tool_out_index);
+    }
+
+    #[test]
+    fn load_session_timeline_errors_on_directory_path() {
+        let dir = tempdir().expect("tempdir");
+
+        let error = load_session_timeline(dir.path()).expect_err("error");
+        match error {
+            LoadSessionTimelineError::OpenFile(error) => {
+                assert_eq!(error.kind(), io::ErrorKind::IsADirectory);
+            }
+        }
+    }
+
+    #[test]
+    fn load_last_assistant_output_errors_on_directory_path() {
+        let dir = tempdir().expect("tempdir");
+
+        let error = load_last_assistant_output(dir.path()).expect_err("error");
+        match error {
+            LoadLastAssistantOutputError::OpenFile(error) => {
+                assert_eq!(error.kind(), io::ErrorKind::IsADirectory);
+            }
+        }
     }
 }

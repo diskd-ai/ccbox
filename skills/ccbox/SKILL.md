@@ -32,6 +32,7 @@ ccbox history --full
 
 ```bash
 ccbox sessions "/abs/path/to/project"
+ccbox history "/abs/path/to/project" --full
 ccbox history "/abs/path/to/session.jsonl" --full
 ```
 

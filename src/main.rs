@@ -82,7 +82,7 @@ fn run_main() -> Result<(), MainError> {
 
 fn print_help() {
     let text = format!(
-        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}                          Start the TUI\n  {name} projects                 List projects\n  {name} sessions [project-path]  List sessions (defaults to current folder)\n  {name} history [log-path]       Print history (defaults to latest session in current folder; use --full)\n  {name} --help\n  {name} --version\n\nENV:\n  CODEX_SESSIONS_DIR  Override the sessions directory (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n",
+        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}                          Start the TUI\n  {name} projects                 List projects\n  {name} sessions [project-path]  List sessions (defaults to current folder)\n  {name} history [log-or-project-path] [--full]\n                               Print history (defaults to latest session in current folder; accepts a project directory)\n  {name} --help\n  {name} --version\n\nENV:\n  CODEX_SESSIONS_DIR  Override the sessions directory (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n",
         name = env!("CARGO_PKG_NAME")
     );
     let mut out = io::stdout().lock();

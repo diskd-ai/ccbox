@@ -1,5 +1,6 @@
 use crate::domain::{ProjectSummary, TimelineItem, TimelineItemKind, index_projects};
 use crate::infra::{LoadSessionTimelineError, ScanError, load_session_timeline, scan_sessions_dir};
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -117,6 +118,9 @@ pub enum CliRunError {
     #[error("project not found: {0}\nHint: run `ccbox projects` and copy the full project path.")]
     ProjectNotFound(String),
 
+    #[error("project has no sessions: {0}")]
+    ProjectHasNoSessions(String),
+
     #[error(transparent)]
     WriteOutput(#[from] io::Error),
 
@@ -172,6 +176,22 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
         }
         CliCommand::History { log_path, full } => {
             let log_path = match log_path {
+                Some(path) if fs::metadata(&path).is_ok_and(|meta| meta.is_dir()) => {
+                    let (projects, warnings) = load_projects(sessions_dir)?;
+                    if warnings > 0 && !write_line(&mut err, &format!("warnings: {warnings}"))? {
+                        return Ok(());
+                    }
+                    let project = select_project(projects, Some(path))?;
+                    project
+                        .sessions
+                        .first()
+                        .map(|session| session.log_path.clone())
+                        .ok_or_else(|| {
+                            CliRunError::ProjectHasNoSessions(
+                                project.project_path.display().to_string(),
+                            )
+                        })?
+                }
                 Some(path) => path,
                 None => {
                     let (projects, warnings) = load_projects(sessions_dir)?;
@@ -184,7 +204,9 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
                         .first()
                         .map(|session| session.log_path.clone())
                         .ok_or_else(|| {
-                            CliRunError::ProjectNotFound(project.project_path.display().to_string())
+                            CliRunError::ProjectHasNoSessions(
+                                project.project_path.display().to_string(),
+                            )
                         })?
                 }
             };

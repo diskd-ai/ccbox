@@ -104,6 +104,7 @@ CLI details:
 - Auto-selects the project for the current folder (or nearest parent) when `project-path` is omitted.
 - `projects` output: `project_name<TAB>project_path<TAB>session_count`
 - `sessions` output: `started_at_rfc3339<TAB>session_id<TAB>title<TAB>log_path` (newest-first)
+- `history` accepts a session `.jsonl` path or a **project directory**; if a directory is provided it selects that project’s latest session.
 - `history` prints a readable timeline; `--full` includes long details (tool calls/outputs, full messages).
 - Pipe-friendly output (handles broken pipes like `ccbox history | head`).
 - Parse warnings and “truncated” notices are printed to stderr.

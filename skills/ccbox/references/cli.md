@@ -38,7 +38,7 @@ Output: **tab-separated** columns
 Print a readable session timeline.
 
 - If `log-path` is omitted, select the latest session for the current folder project (if it exists).
+- If `log-path` is a directory, treat it as a project path and select that project’s latest session.
 - `--full` prints the full detail body for each timeline item (tool outputs, long assistant messages, etc.).
 
 Output: plain text (pipe-friendly), grouped by turns.
-
