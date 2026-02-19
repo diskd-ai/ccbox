@@ -71,13 +71,14 @@ What’s happening / features:
 
 ## Roadmap
 
-1. Gemini support: sessions view + spawning.
-2. Manage spawned sessions (processes) and their lifecycle.
-3. Manage a tasks queue and assign tasks to an engine (Codex/Claude).
-4. Support multi-session workflows (handoffs, context carry, session grouping).
-5. Manage Ralph loops.
-6. Loops planning and task decomposition routines.
-7. Remote control via channels:
+1. Claude support: sessions view + spawning.
+2. Gemini support: sessions view + spawning.
+3. Manage spawned sessions (processes) and their lifecycle.
+4. Manage a tasks queue and assign tasks to an engine (Codex/Claude).
+5. Support multi-session workflows (handoffs, context carry, session grouping).
+6. Manage Ralph loops.
+7. Loops planning and task decomposition routines.
+8. Remote control via channels:
    - JSON-RPC
    - Telegram
    - Slack
