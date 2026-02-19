@@ -44,6 +44,13 @@ CODEX_SESSIONS_DIR=/path/to/sessions cargo run
 - Branch naming: use hyphens, not slashes (e.g., `alexeus-session-browser`).
 - PRs: explain the “why”, link issues, list verification steps (commands run), and include screenshots/recordings for UI changes.
 
+## Release Guidelines
+
+- Release only after code/doc changes are committed and pushed.
+- For a new release: bump `Cargo.toml` version, then create and push an annotated tag `vX.Y.Z` (this triggers the GitHub Actions `Release` workflow).
+- Verify the release completed and assets exist (`gh run watch …`, `gh release view vX.Y.Z`).
+- After releasing, verify the self-update path works against the new release (`ccbox update`).
+
 ## Security & Configuration Tips
 
 - Codex session logs can include file paths, prompts, and token counts; treat them as sensitive and never commit data from `$HOME/.codex/sessions`.
