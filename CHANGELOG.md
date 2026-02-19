@@ -12,6 +12,7 @@ All notable user-facing changes to `ccbox` are documented in this file.
 - TUI: pretty-print JSON in the timeline details view.
 - TUI: add a Session Stats window (`F3`) for duration/tokens/tool outcomes and `apply_patch` changes.
 - TUI: Sessions view supports type-to-filter (search).
+- TUI: highlight matched text in Projects/Sessions filters.
 
 ## [0.1.3] - 2026-02-19
 

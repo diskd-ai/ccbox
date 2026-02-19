@@ -312,7 +312,13 @@ fn render_projects(
             .copied()
             .filter_map(|project_index| {
                 projects.get(project_index).map(|project| {
-                    project_list_item(project, max_width, sessions_col_width, modified_col_width)
+                    project_list_item(
+                        project,
+                        max_width,
+                        sessions_col_width,
+                        modified_col_width,
+                        &projects_view.query,
+                    )
                 })
             })
             .collect();
@@ -449,7 +455,13 @@ fn render_sessions(
             .copied()
             .filter_map(|index| {
                 project.sessions.get(index).map(|session| {
-                    session_list_item(session, max_width, size_col_width, modified_col_width)
+                    session_list_item(
+                        session,
+                        max_width,
+                        size_col_width,
+                        modified_col_width,
+                        &sessions_view.query,
+                    )
                 })
             })
             .collect();
@@ -944,6 +956,53 @@ fn process_right_columns_width(processes: &[crate::app::ProcessInfo]) -> (usize,
     (status_col_width, started_col_width)
 }
 
+fn highlight_query_spans(text: &str, query: &str, base_style: Style) -> Vec<Span<'static>> {
+    let query = query.trim();
+    if query.is_empty() || text.is_empty() {
+        return vec![Span::styled(text.to_string(), base_style)];
+    }
+
+    let query_lower = query.to_ascii_lowercase();
+    if query_lower.is_empty() {
+        return vec![Span::styled(text.to_string(), base_style)];
+    }
+
+    let highlighted_style = base_style.bg(Color::LightYellow).fg(Color::Black);
+    let text_lower = text.to_ascii_lowercase();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut cursor = 0usize;
+
+    while cursor < text_lower.len() {
+        let Some(relative) = text_lower[cursor..].find(&query_lower) else {
+            break;
+        };
+        let start = cursor + relative;
+        let end = start + query_lower.len();
+
+        if start > cursor {
+            spans.push(Span::styled(text[cursor..start].to_string(), base_style));
+        }
+        if end <= text.len() {
+            spans.push(Span::styled(
+                text[start..end].to_string(),
+                highlighted_style,
+            ));
+        }
+
+        cursor = end;
+    }
+
+    if cursor < text.len() {
+        spans.push(Span::styled(text[cursor..].to_string(), base_style));
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::styled(text.to_string(), base_style));
+    }
+
+    spans
+}
+
 fn pad_left(text: &str, width: usize) -> String {
     let current = UnicodeWidthStr::width(text);
     if current >= width {
@@ -1029,6 +1088,7 @@ fn project_list_item(
     max_width: usize,
     sessions_col_width: usize,
     modified_col_width: usize,
+    query: &str,
 ) -> ListItem<'static> {
     if max_width == 0 {
         return ListItem::new(Line::from(""));
@@ -1072,13 +1132,15 @@ fn project_list_item(
     let min_left = 8usize;
     let gap = 2usize;
     if right_width + gap + min_left >= content_width {
-        return ListItem::new(Line::from(vec![
-            dot,
-            Span::styled(
-                truncate_end(name, content_width),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-        ]));
+        let name = truncate_end(name, content_width);
+        let mut spans = Vec::new();
+        spans.push(dot);
+        spans.extend(highlight_query_spans(
+            &name,
+            query,
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+        return ListItem::new(Line::from(spans));
     }
 
     let left_available = content_width.saturating_sub(right_width + gap);
@@ -1095,8 +1157,9 @@ fn project_list_item(
         let name_budget = left_available.saturating_sub(separator_width + min_path);
         let name = truncate_end(name, name_budget.max(min_left));
         let name_width = UnicodeWidthStr::width(name.as_str());
-        spans.push(Span::styled(
-            name,
+        spans.extend(highlight_query_spans(
+            &name,
+            query,
             Style::default().add_modifier(Modifier::BOLD),
         ));
         left_width += name_width;
@@ -1108,14 +1171,19 @@ fn project_list_item(
         let path_width = UnicodeWidthStr::width(path.as_str());
         if !path.is_empty() {
             spans.push(Span::raw(separator));
-            spans.push(Span::styled(path, Style::default().fg(Color::DarkGray)));
+            spans.extend(highlight_query_spans(
+                &path,
+                query,
+                Style::default().fg(Color::DarkGray),
+            ));
             left_width += separator_width + path_width;
         }
     } else {
         let name = truncate_end(name, left_available);
         let name_width = UnicodeWidthStr::width(name.as_str());
-        spans.push(Span::styled(
-            name.clone(),
+        spans.extend(highlight_query_spans(
+            &name,
+            query,
             Style::default().add_modifier(Modifier::BOLD),
         ));
         left_width += name_width;
@@ -1154,6 +1222,7 @@ fn session_list_item(
     max_width: usize,
     size_col_width: usize,
     modified_col_width: usize,
+    query: &str,
 ) -> ListItem<'static> {
     if max_width == 0 {
         return ListItem::new(Line::from(""));
@@ -1184,10 +1253,11 @@ fn session_list_item(
     let min_left = 8usize;
     let gap = 2usize;
     if right_width + gap + min_left >= content_width {
-        return ListItem::new(Line::from(vec![
-            dot,
-            Span::raw(truncate_end(&session.title, content_width)),
-        ]));
+        let title = truncate_end(&session.title, content_width);
+        let mut spans = Vec::new();
+        spans.push(dot);
+        spans.extend(highlight_query_spans(&title, query, Style::default()));
+        return ListItem::new(Line::from(spans));
     }
 
     let left_available = content_width.saturating_sub(right_width + gap);
@@ -1195,14 +1265,18 @@ fn session_list_item(
     let title_width = UnicodeWidthStr::width(title.as_str());
     let padding_width = content_width.saturating_sub(title_width + right_width);
 
-    ListItem::new(Line::from(vec![
-        dot,
-        Span::raw(title),
-        Span::raw(" ".repeat(padding_width)),
-        Span::styled(size, Style::default().fg(Color::DarkGray)),
-        Span::styled(column_sep, Style::default().fg(Color::DarkGray)),
-        Span::styled(modified, Style::default().fg(Color::DarkGray)),
-    ]))
+    let mut spans = Vec::new();
+    spans.push(dot);
+    spans.extend(highlight_query_spans(&title, query, Style::default()));
+    spans.push(Span::raw(" ".repeat(padding_width)));
+    spans.push(Span::styled(size, Style::default().fg(Color::DarkGray)));
+    spans.push(Span::styled(
+        column_sep,
+        Style::default().fg(Color::DarkGray),
+    ));
+    spans.push(Span::styled(modified, Style::default().fg(Color::DarkGray)));
+
+    ListItem::new(Line::from(spans))
 }
 
 fn truncate_end(text: &str, max_width: usize) -> String {
