@@ -15,6 +15,7 @@ All notable user-facing changes to `ccbox` are documented in this file.
 - TUI: highlight matched text in Projects/Sessions filters.
 - TUI: show current version in the footer.
 - TUI: help window shows app name/version and a short intro header.
+- TUI: align the menu bar/system menu overlay with content padding.
 
 ## [0.1.3] - 2026-02-19
 

@@ -117,7 +117,7 @@ fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
             .add_modifier(Modifier::BOLD)
     };
 
-    let system_label = " 📦 System ";
+    let system_label = "  📦 System ";
     let hint = "(F2)";
 
     let used_width = UnicodeWidthStr::width(system_label)
@@ -163,8 +163,11 @@ fn render_system_menu_overlay(frame: &mut Frame, area: Rect, menu: &crate::app::
 
     let popup_width = (desired_width as u16).min(area.width);
     let popup_height = (items.len() as u16).saturating_add(2).min(area.height);
+    let max_x = area
+        .x
+        .saturating_add(area.width.saturating_sub(popup_width));
     let popup = Rect {
-        x: area.x.saturating_add(1),
+        x: area.x.saturating_add(2).min(max_x),
         y: area.y,
         width: popup_width,
         height: popup_height,
@@ -2710,7 +2713,7 @@ fn inner_area(area: Rect) -> Rect {
         return area;
     }
     area.inner(Margin {
-        vertical: 1,
+        vertical: 0,
         horizontal: 2,
     })
 }
