@@ -1,8 +1,8 @@
 mod text_editor;
 
 use crate::domain::{
-    AgentEngine, ProjectIndex, ProjectSummary, SessionSummary, TimelineItem, TimelineItemKind,
-    TurnContextSummary, index_projects,
+    AgentEngine, ProjectIndex, ProjectSummary, SessionStats, SessionSummary, TimelineItem,
+    TimelineItemKind, TurnContextSummary, index_projects,
 };
 use crate::infra::ScanWarningCount;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -67,6 +67,7 @@ pub struct AppModel {
     pub delete_confirm: Option<DeleteConfirmDialog>,
     pub delete_session_confirm: Option<DeleteSessionConfirmDialog>,
     pub session_result_preview: Option<SessionResultPreviewOverlay>,
+    pub session_stats_overlay: Option<SessionStatsOverlay>,
     pub processes: Vec<ProcessInfo>,
 }
 
@@ -88,6 +89,7 @@ impl AppModel {
             delete_confirm: None,
             delete_session_confirm: None,
             session_result_preview: None,
+            session_stats_overlay: None,
             processes: Vec::new(),
         }
     }
@@ -105,6 +107,7 @@ impl AppModel {
                 delete_confirm: self.delete_confirm.clone(),
                 delete_session_confirm: self.delete_session_confirm.clone(),
                 session_result_preview: self.session_result_preview.clone(),
+                session_stats_overlay: self.session_stats_overlay.clone(),
                 processes: self.processes.clone(),
             };
         }
@@ -233,6 +236,7 @@ impl AppModel {
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
+            session_stats_overlay: self.session_stats_overlay.clone(),
             processes: self.processes.clone(),
         }
     }
@@ -249,6 +253,7 @@ impl AppModel {
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
+            session_stats_overlay: self.session_stats_overlay.clone(),
             processes: self.processes.clone(),
         }
     }
@@ -265,6 +270,7 @@ impl AppModel {
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
+            session_stats_overlay: self.session_stats_overlay.clone(),
             processes: self.processes.clone(),
         }
     }
@@ -294,6 +300,7 @@ impl AppModel {
             delete_confirm: self.delete_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
+            session_stats_overlay: self.session_stats_overlay.clone(),
             processes: self.processes.clone(),
             view: View::SessionDetail(SessionDetailView {
                 from_sessions,
@@ -316,6 +323,13 @@ impl AppModel {
 pub struct SessionResultPreviewOverlay {
     pub session_title: String,
     pub output: String,
+    pub scroll: u16,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionStatsOverlay {
+    pub session: SessionSummary,
+    pub stats: SessionStats,
     pub scroll: u16,
 }
 
@@ -566,6 +580,9 @@ pub enum AppCommand {
         from_sessions: SessionsView,
         session: SessionSummary,
     },
+    OpenSessionStats {
+        session: SessionSummary,
+    },
     OpenSessionDetailByLogPath {
         project_path: PathBuf,
         log_path: PathBuf,
@@ -618,6 +635,7 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         if model.delete_confirm.is_some()
             || model.delete_session_confirm.is_some()
             || model.session_result_preview.is_some()
+            || model.session_stats_overlay.is_some()
         {
             return (model, AppCommand::None);
         }
@@ -633,6 +651,10 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
 
     if let Some(menu) = model.system_menu.take() {
         return update_system_menu_overlay(model, menu, key);
+    }
+
+    if let Some(overlay) = model.session_stats_overlay.take() {
+        return update_session_stats_overlay(model, overlay, key);
     }
 
     if let Some(preview) = model.session_result_preview.take() {
@@ -751,6 +773,9 @@ fn update_on_paste(model: AppModel, text: String) -> (AppModel, AppCommand) {
     if model.session_result_preview.is_some() {
         return (model, AppCommand::None);
     }
+    if model.session_stats_overlay.is_some() {
+        return (model, AppCommand::None);
+    }
 
     let view = model.view.clone();
     if let View::NewSession(mut new_session_view) = view {
@@ -789,6 +814,37 @@ fn update_session_result_preview_overlay(
     }
 
     model.session_result_preview = Some(preview);
+    (model, AppCommand::None)
+}
+
+fn update_session_stats_overlay(
+    mut model: AppModel,
+    mut overlay: SessionStatsOverlay,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Backspace => {
+            model.session_stats_overlay = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Up => {
+            overlay.scroll = overlay.scroll.saturating_sub(1);
+        }
+        KeyCode::Down => {
+            overlay.scroll = overlay.scroll.saturating_add(1);
+        }
+        KeyCode::PageUp => {
+            let step = page_step_standard_list(model.terminal_size) as u16;
+            overlay.scroll = overlay.scroll.saturating_sub(step);
+        }
+        KeyCode::PageDown => {
+            let step = page_step_standard_list(model.terminal_size) as u16;
+            overlay.scroll = overlay.scroll.saturating_add(step);
+        }
+        _ => {}
+    }
+
+    model.session_stats_overlay = Some(overlay);
     (model, AppCommand::None)
 }
 
@@ -893,6 +949,7 @@ fn update_error(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
+                session_stats_overlay: model.session_stats_overlay.clone(),
                 processes: model.processes.clone(),
                 view: View::Projects(ProjectsView::new(&model.data.projects)),
             },
@@ -925,6 +982,7 @@ fn update_projects(
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
+                session_stats_overlay: model.session_stats_overlay.clone(),
                 processes: model.processes.clone(),
                 view: View::Sessions(SessionsView::new(project.project_path.clone())),
             };
@@ -1001,6 +1059,7 @@ fn update_projects(
             delete_confirm: model.delete_confirm.clone(),
             delete_session_confirm: model.delete_session_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
+            session_stats_overlay: model.session_stats_overlay.clone(),
             processes: model.processes.clone(),
             view: View::Projects(view),
         },
@@ -1090,6 +1149,16 @@ fn update_sessions(
     key: KeyEvent,
 ) -> (AppModel, AppCommand) {
     match key.code {
+        KeyCode::Char('i') | KeyCode::Char('I') => {
+            let Some(project) = view.current_project(&model.data.projects) else {
+                return (model, AppCommand::None);
+            };
+            let Some(session) = project.sessions.get(view.session_selected).cloned() else {
+                model.notice = Some("No session selected.".to_string());
+                return (model, AppCommand::None);
+            };
+            return (model, AppCommand::OpenSessionStats { session });
+        }
         KeyCode::Enter => {
             let Some(project) = view.current_project(&model.data.projects) else {
                 return (model, AppCommand::None);
@@ -1116,6 +1185,7 @@ fn update_sessions(
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
+                session_stats_overlay: model.session_stats_overlay.clone(),
                 processes: model.processes.clone(),
                 view: View::Projects(ProjectsView::new(&model.data.projects)),
             };
@@ -1162,6 +1232,7 @@ fn update_sessions(
                     delete_confirm: model.delete_confirm.clone(),
                     delete_session_confirm: model.delete_session_confirm.clone(),
                     session_result_preview: model.session_result_preview.clone(),
+                    session_stats_overlay: model.session_stats_overlay.clone(),
                     processes: model.processes.clone(),
                     view: View::Projects(ProjectsView::new(&model.data.projects)),
                 };
@@ -1179,6 +1250,7 @@ fn update_sessions(
                 delete_confirm: model.delete_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
+                session_stats_overlay: model.session_stats_overlay.clone(),
                 processes: model.processes.clone(),
                 view: View::NewSession(NewSessionView::new(view.clone())),
             };
@@ -1207,6 +1279,7 @@ fn update_sessions(
             delete_confirm: model.delete_confirm.clone(),
             delete_session_confirm: model.delete_session_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
+            session_stats_overlay: model.session_stats_overlay.clone(),
             processes: model.processes.clone(),
             view: View::Sessions(view),
         },
@@ -1521,6 +1594,14 @@ fn update_session_detail(
                 model.view = View::Sessions(view.from_sessions.clone());
                 return (model, AppCommand::None);
             }
+        }
+        KeyCode::Char('i') | KeyCode::Char('I') => {
+            return (
+                model,
+                AppCommand::OpenSessionStats {
+                    session: view.session.clone(),
+                },
+            );
         }
         KeyCode::Up => {
             view.selected = view.selected.saturating_sub(1);

@@ -345,15 +345,11 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
             Ok(())
         }
         CliCommand::Update => match crate::infra::self_update()? {
-                Some(update) => {
-                    let line = format!(
-                        "updated:\tv{}\t->\t{}",
-                        update.current,
-                        update.latest_tag
-                    );
-                    write_line(&mut out, &line)?;
-                    Ok(())
-                }
+            Some(update) => {
+                let line = format!("updated:\tv{}\t->\t{}", update.current, update.latest_tag);
+                write_line(&mut out, &line)?;
+                Ok(())
+            }
             None => {
                 let line = format!("up-to-date:\tv{}", env!("CARGO_PKG_VERSION"));
                 write_line(&mut out, &line)?;

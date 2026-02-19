@@ -7,7 +7,7 @@ mod ui;
 use crate::app::ProcessOutputKind;
 use crate::app::{AppCommand, AppEvent, AppModel};
 use crate::cli::CliInvocation;
-use crate::domain::{make_session_summary, parse_session_meta_line};
+use crate::domain::{compute_session_stats, make_session_summary, parse_session_meta_line};
 use crate::infra::{
     KillProcessError, ProcessExit, ProcessManager, ProcessSignal, WatchSignal, delete_session_logs,
     load_last_assistant_output, load_session_timeline, read_from_offset, read_tail,
@@ -286,6 +286,27 @@ fn run(
                                     .with_notice(Some(format!("Failed to load session: {error}")));
                             }
                         },
+                        AppCommand::OpenSessionStats { session } => {
+                            match load_session_timeline(&session.log_path) {
+                                Ok(timeline) => {
+                                    let stats =
+                                        compute_session_stats(&session.meta, &timeline.items);
+                                    model.session_stats_overlay =
+                                        Some(crate::app::SessionStatsOverlay {
+                                            session,
+                                            stats,
+                                            scroll: 0,
+                                        });
+                                    model.help_open = false;
+                                    model.system_menu = None;
+                                }
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to load stats: {error}"
+                                    )));
+                                }
+                            }
+                        }
                         AppCommand::OpenSessionResultPreview { session } => {
                             match load_last_assistant_output(&session.log_path) {
                                 Ok(result) => {

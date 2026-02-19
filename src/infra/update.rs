@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::fs;
 use std::fmt;
+use std::fs;
 use std::io::{self, Read, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -32,7 +32,6 @@ impl Version {
             patch,
         })
     }
-
 }
 
 impl fmt::Display for Version {

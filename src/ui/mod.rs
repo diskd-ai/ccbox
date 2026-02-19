@@ -59,7 +59,9 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
         View::SessionDetail(detail_view) => {
             render_session_detail(frame, content_area, model, detail_view)
         }
-        View::Processes(processes_view) => render_processes(frame, content_area, model, processes_view),
+        View::Processes(processes_view) => {
+            render_processes(frame, content_area, model, processes_view)
+        }
         View::ProcessOutput(output_view) => {
             render_process_output(frame, content_area, model, output_view)
         }
@@ -84,6 +86,10 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
 
     if let Some(preview) = &model.session_result_preview {
         render_session_result_preview_overlay(frame, content_area, preview);
+    }
+
+    if let Some(overlay) = &model.session_stats_overlay {
+        render_session_stats_overlay(frame, content_area, overlay);
     }
 }
 
@@ -114,8 +120,9 @@ fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
     let system_label = " 📦 System ";
     let hint = "(F2)";
 
-    let used_width =
-        UnicodeWidthStr::width(system_label) + UnicodeWidthStr::width("  ") + UnicodeWidthStr::width(hint);
+    let used_width = UnicodeWidthStr::width(system_label)
+        + UnicodeWidthStr::width("  ")
+        + UnicodeWidthStr::width(hint);
     let remaining = (bar_area.width as usize).saturating_sub(used_width);
 
     let spans = vec![
@@ -125,14 +132,13 @@ fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
         Span::styled(" ".repeat(remaining), base_style),
     ];
 
-    frame.render_widget(Paragraph::new(Line::from(spans)).style(base_style), bar_area);
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(base_style),
+        bar_area,
+    );
 }
 
-fn render_system_menu_overlay(
-    frame: &mut Frame,
-    area: Rect,
-    menu: &crate::app::SystemMenuOverlay,
-) {
+fn render_system_menu_overlay(frame: &mut Frame, area: Rect, menu: &crate::app::SystemMenuOverlay) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -773,11 +779,11 @@ fn sessions_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let text = if warnings == 0 {
-        "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Space=result  n=new  Del/Backspace=delete  Esc=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+        "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Space=result  i=stats  n=new  Del/Backspace=delete  Esc=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
             .to_string()
     } else {
         format!(
-            "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Space=result  n=new  Del/Backspace=delete  Esc=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
+            "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Space=result  i=stats  n=new  Del/Backspace=delete  Esc=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
         )
     };
     footer_paragraph(text, notice, update_hint, processes_running)
@@ -1394,7 +1400,7 @@ fn session_detail_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let mut parts = vec![
-        "Keys: arrows=move  PgUp/PgDn=page  Enter=ToolOut (Tool)  o=result  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help".to_string(),
+        "Keys: arrows=move  PgUp/PgDn=page  Enter=ToolOut (Tool)  o=result  i=stats  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help".to_string(),
         format!("items: {item_count}"),
     ];
     if truncated {
@@ -2362,6 +2368,150 @@ fn render_session_result_preview_overlay(
     frame.render_widget(paragraph, popup);
 }
 
+fn render_session_stats_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    overlay: &crate::app::SessionStatsOverlay,
+) {
+    let popup = centered_rect(82, 78, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .title("Session Stats");
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(inner);
+
+    let max_line_width = (chunks[0].width as usize).saturating_sub(1);
+
+    let cwd = truncate_middle(
+        &overlay.session.meta.cwd.display().to_string(),
+        max_line_width,
+    );
+    let log_path = truncate_middle(
+        &overlay.session.log_path.display().to_string(),
+        max_line_width,
+    );
+
+    let duration = overlay.stats.duration_ms.and_then(|ms| {
+        if ms >= 0 {
+            Some(format_duration(Duration::from_millis(ms as u64)))
+        } else {
+            None
+        }
+    });
+
+    let tool_calls_line = format!(
+        "Tool calls: total={}  success={}  invalid={}  error={}  unknown={}",
+        overlay.stats.tool_calls_total,
+        overlay.stats.tool_calls_success,
+        overlay.stats.tool_calls_invalid,
+        overlay.stats.tool_calls_error,
+        overlay.stats.tool_calls_unknown
+    );
+
+    let token_total = overlay
+        .stats
+        .total_tokens
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let token_last = overlay
+        .stats
+        .last_tokens
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "-".to_string());
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(Line::from(truncate_end(
+        &format!("Title: {}", overlay.session.title),
+        max_line_width,
+    )));
+    lines.push(Line::from(format!(
+        "Session ID: {}",
+        overlay.session.meta.id
+    )));
+    lines.push(Line::from(format!("Project: {cwd}")));
+    lines.push(Line::from(format!(
+        "Started: {}",
+        overlay.session.meta.started_at_rfc3339
+    )));
+    if let Some(modified) = overlay.session.file_modified {
+        lines.push(Line::from(format!(
+            "Modified: {}",
+            relative_time_ago(Some(modified))
+        )));
+    }
+    lines.push(Line::from(format!(
+        "Log size: {} ({})",
+        format_size(overlay.session.file_size_bytes, DECIMAL),
+        overlay.session.file_size_bytes
+    )));
+    lines.push(Line::from(format!("Log: {log_path}")));
+    lines.push(Line::from(""));
+
+    lines.push(Line::from("Time"));
+    lines.push(Line::from(format!(
+        "  Duration: {}",
+        duration.unwrap_or_else(|| "-".to_string())
+    )));
+    lines.push(Line::from(""));
+
+    lines.push(Line::from("Tokens"));
+    lines.push(Line::from(format!("  Total: {token_total}")));
+    lines.push(Line::from(format!("  Last:  {token_last}")));
+    lines.push(Line::from(""));
+
+    lines.push(Line::from("Tools"));
+    lines.push(Line::from(truncate_end(&tool_calls_line, max_line_width)));
+    if overlay.stats.tools_used.is_empty() {
+        lines.push(Line::from("  (none)"));
+    } else {
+        for tool in &overlay.stats.tools_used {
+            lines.push(Line::from(truncate_end(
+                &format!("  - {}: {}", tool.name, tool.calls),
+                max_line_width,
+            )));
+        }
+    }
+    lines.push(Line::from(""));
+
+    lines.push(Line::from("Changes (apply_patch)"));
+    lines.push(Line::from(format!(
+        "  Calls: {}  Ops: {}  Lines: +{} -{}  Files: {}",
+        overlay.stats.apply_patch_calls,
+        overlay.stats.apply_patch_operations,
+        overlay.stats.lines_added,
+        overlay.stats.lines_removed,
+        overlay.stats.files_changed.len()
+    )));
+    if overlay.stats.files_changed.is_empty() {
+        lines.push(Line::from("  (none)"));
+    } else {
+        for file in &overlay.stats.files_changed {
+            lines.push(Line::from(truncate_middle(
+                &format!("  - {} (ops: {})", file.path, file.operations),
+                max_line_width,
+            )));
+        }
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((overlay.scroll, 0));
+    frame.render_widget(paragraph, chunks[0]);
+
+    let hint = Paragraph::new("Keys: arrows/PgUp/PgDn=scroll  Esc/Backspace=close")
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    frame.render_widget(hint, chunks[1]);
+}
+
 fn selected_turn_context(detail_view: &crate::app::SessionDetailView) -> String {
     let Some(item) = detail_view.items.get(
         detail_view
@@ -2461,9 +2611,11 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - Projects: Space shows Result (newest session Out)"),
         Line::from("  - Sessions: Del/Backspace deletes session log"),
         Line::from("  - Sessions: Space shows Result (last Out)"),
+        Line::from("  - Sessions: i shows Stats"),
         Line::from("  - New Session: Ctrl+Enter/Cmd+Enter sends, Shift+Tab switches engine"),
         Line::from("  - Projects/Sessions: ● indicates online"),
         Line::from("  - Session Detail: o shows Result (last Out)"),
+        Line::from("  - Session Detail: i shows Stats"),
         Line::from("  - Session Detail: Enter jumps to ToolOut for Tool calls"),
         Line::from("  - Session Detail: c toggles Visible Context"),
         Line::from("  - Processes: s/e/l=open output, k=kill, Enter=open session"),
