@@ -70,6 +70,7 @@ What’s happening / features:
 What’s happening / features:
 - Paste/edit a prompt, then spawn Codex/Claude in the background.
 - `Shift+Tab` switches engine; `F4` switches `Pipes`/`TTY`; `Ctrl+Enter`/`Cmd+Enter` sends.
+- Fork Resume: press `f` in Session Detail to open a fork-resume prompt editor (engine/I/O are locked for resume).
 
 ## Roadmap
 
@@ -153,8 +154,7 @@ Example prompts:
 - Projects: type to filter · `Esc` clears filter · `Enter` opens · `Space` result (newest session) · `Del` delete (confirm)
 - Sessions: `Enter` opens · `Space` result (last Out) · `n` new session · `Del`/`Backspace` delete (confirm) · `Esc` back
 - New Session: edit/paste · `Ctrl+Enter`/`Cmd+Enter` send · `Shift+Tab` switch engine · `F4` switch `Pipes`/`TTY` · `Esc` cancel
-- Session Detail: `Enter` ToolOut (Tool call) · `o` result (last Out) · `c` visible context window · `Esc`/`Backspace` back
-- Session Detail: `f` forks/resumes from selected Turn/User/Out/ToolOut record (Codex)
+- Session Detail: `Enter` ToolOut (Tool call) · `f` fork/resume (Codex) · `o` result (last Out) · `c` visible context window · `Esc`/`Backspace` back
 - Processes: `a` attach (TTY) · `Ctrl-]` detach · `s` stdout · `e` stderr · `l` log · `k` kill · `Enter` opens session (Codex only)
 
 ## License

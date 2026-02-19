@@ -26,19 +26,19 @@ checkboxes.
 
 ## Tasks
 
-- [ ] Tasks window (System menu)
-  - [ ] Create task (fullscreen editor; supports inserting images as `[Image N]` references)
-  - [ ] View task
-  - [ ] Delete task
-  - [ ] Spawn task execution (Codex/Claude)
-  - [ ] Persist tasks in `~/.ccbox/tasks.db` (SQLite) with migrations (rusqlite + sqlx)
+- [x] Tasks window (System menu)
+  - [x] Create task (fullscreen editor; supports inserting images as `[Image N]` references)
+  - [x] View task
+  - [x] Delete task
+  - [x] Spawn task execution (Codex/Claude)
+  - [x] Persist tasks in `~/.ccbox/tasks.db` (SQLite) with migrations (rusqlite + sqlx)
 
 ## Spawning / Processes
 
 - [x] Spawn Codex/Claude processes + Processes screen (stdout/stderr/log, kill, open session log)
-- [ ] Spawn agents in detached TTY sessions (screen/tmux-like): interactive stdin/stdout
+- [x] TTY spawn mode with attach/detach (spawn from New Session; attach from Processes)
 - [ ] Switch into a running session from Projects/Sessions and back (tmux-like hotkey)
-- [ ] Fork/resume Codex from a timeline record (mid-session resume)
+- [x] Fork/resume Codex from a timeline record (mid-session resume)
 - [ ] Show session diff (files changed + summary)
 
 ## Automation / Loops
