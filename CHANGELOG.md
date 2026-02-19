@@ -6,7 +6,14 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Changes
 
-- TUI: add a System menu (`F2`) for global actions.
+- (none)
+
+## [0.1.4] - 2026-02-19
+
+### Changes
+
+- TUI: main menu (`F2`) with global + view-specific actions.
+- TUI: Session Detail supports pane focus (`Tab`) and scrollbars for long Timeline/Details content.
 - TUI: session timeline details are always expanded; `Enter` now only jumps Tool -> ToolOut.
 - TUI: highlight update-available hint in light green.
 - TUI: pretty-print JSON in the timeline details view.
@@ -15,7 +22,7 @@ All notable user-facing changes to `ccbox` are documented in this file.
 - TUI: highlight matched text in Projects/Sessions filters.
 - TUI: show current version in the footer.
 - TUI: help window shows app name/version and a short intro header.
-- TUI: align the menu bar/system menu overlay with content padding.
+- TUI: align the menu bar/menu overlay with content padding.
 
 ## [0.1.3] - 2026-02-19
 
