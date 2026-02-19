@@ -6,7 +6,13 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Changes
 
+## [0.1.5] - 2026-02-19
+
+### Changes
+
 - TUI: show update-available hint in green.
+- TUI: show colored `F1`/`F2`/`F3` shortcuts in the menu bar.
+- TUI: remove the emoji from the System menu label.
 - Docs: move roadmap to `ROADMAP.md`.
 
 ## [0.1.4] - 2026-02-19
