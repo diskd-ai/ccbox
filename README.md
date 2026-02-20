@@ -37,7 +37,7 @@ cargo install --path .
 
 ### Projects
 
-![Projects screen showing the menu bar, searchable projects list, and session-count/last-modified columns.](assets/sessions-2026-02-20.png)
+![Projects screen showing the menu bar, searchable projects list, and session-count/last-modified columns.](assets/projects.png)
 
 What’s happening / features:
 - Browse projects discovered under your sessions directory.
@@ -47,7 +47,7 @@ What’s happening / features:
 
 ### Menu bar
 
-![Menu bar with the Window menu open, showing available screens and shortcuts.](assets/sesisons-menu-2026-02-20.png)
+![Menu bar with the Window menu open, showing available screens and shortcuts.](assets/menu-window.png)
 
 What’s happening / features:
 - `F2` opens the menu; arrows/Enter (and mouse) navigate.
@@ -56,7 +56,7 @@ What’s happening / features:
 
 ### Session Detail (timeline)
 
-![Session Detail screen showing the timeline (left) and details (right) with focus styling and scrollbars.](assets/timeline-2026-02-20.png)
+![Session Detail screen showing the timeline (left) and details (right) with focus styling and scrollbars.](assets/timeline.png)
 
 What’s happening / features:
 - Timeline shows session events in order; details are always expanded.
@@ -65,7 +65,7 @@ What’s happening / features:
 
 ### Session actions (fork/resume)
 
-![Session menu showing actions like fork/resume, focus switching, result preview, and visible context.](assets/fork.png)
+![Session menu showing actions like fork/resume, focus switching, result preview, and visible context.](assets/session-menu.png)
 
 What’s happening / features:
 - Fork/resume Codex from a selected Turn/User/Out/ToolOut record.
@@ -73,21 +73,21 @@ What’s happening / features:
 
 ### Session stats
 
-![Session statistics window with duration, tokens, tool usage, and change summary.](assets/sessions-stat-2026-02-20.png)
+![Session statistics window with duration, tokens, tool usage, and change summary.](assets/session-stats.png)
 
 What’s happening / features:
 - Time spent, token usage, tool-call breakdown (success/error/unknown), and `apply_patch` changes.
 
 ### Tasks
 
-![Tasks screen showing tasks list with engine, project path, and image counts.](assets/task-queue-2026-02-20.png)
+![Tasks screen showing tasks list with engine, project path, and image counts.](assets/tasks.png)
 
 What’s happening / features:
 - Type to filter; `n` creates; `Ctrl+Enter` spawns; Shift+Tab switches engine.
 
 ### Processes
 
-![Processes screen showing spawned background agents with status and quick access to outputs.](assets/background-processing-2026-02-20.png)
+![Processes screen showing spawned background agents with status and quick access to outputs.](assets/processes.png)
 
 What’s happening / features:
 - View output (`s`/`e`/`l`), kill (`k`), attach (`a`), and open the related session.
