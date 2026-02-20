@@ -6,6 +6,8 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Changes
 
+- TUI: auto-rescan when Claude, Gemini, or OpenCode sessions change (file watcher).
+
 ### Fixes
 
 ## [0.1.15] - 2026-02-20

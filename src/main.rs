@@ -13,11 +13,14 @@ use crate::domain::{
 };
 use crate::infra::{
     AttachTtyError, KillProcessError, ProcessExit, ProcessManager, ProcessSignal, ResizeTtyError,
+    ResolveClaudeProjectsDirError, ResolveGeminiRootDirError, ResolveOpenCodeDbPathError,
     SessionIndex, TaskStore, WatchSignal, WriteTtyError, delete_session_logs,
     fork_codex_session_log_at_cut, load_last_assistant_output, load_session_index,
     load_session_timeline, read_from_offset, read_tail, refresh_session_index,
-    resolve_ccbox_state_dir, resolve_sessions_dir, save_session_index, scan_all_sessions,
+    resolve_ccbox_state_dir, resolve_claude_projects_dir, resolve_gemini_root_dir,
+    resolve_opencode_db_path, resolve_sessions_dir, save_session_index, scan_all_sessions,
     set_session_alias, set_session_project, watch_session_file, watch_sessions_dir,
+    watch_sqlite_db_family,
 };
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -203,7 +206,7 @@ fn run(
         }
     };
 
-    let watcher = match watch_sessions_dir(&model.data.sessions_dir) {
+    let codex_watcher = match watch_sessions_dir(&model.data.sessions_dir) {
         Ok(watcher) => Some(watcher),
         Err(error) => {
             *model = model.with_notice(Some(format!(
@@ -211,6 +214,64 @@ fn run(
             )));
             None
         }
+    };
+
+    let claude_watcher = match resolve_claude_projects_dir() {
+        Ok(dir) => {
+            if dir.exists() {
+                match watch_sessions_dir(&dir) {
+                    Ok(watcher) => Some(watcher),
+                    Err(error) => {
+                        *model = model.with_notice(Some(format!(
+                            "Claude auto-rescan disabled: {error} (Ctrl+R to rescan)"
+                        )));
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        }
+        Err(ResolveClaudeProjectsDirError::HomeDirNotFound) => None,
+    };
+
+    let gemini_watcher = match resolve_gemini_root_dir() {
+        Ok(root) => {
+            let tmp_dir = root.join("tmp");
+            if tmp_dir.exists() {
+                match watch_sessions_dir(&tmp_dir) {
+                    Ok(watcher) => Some(watcher),
+                    Err(error) => {
+                        *model = model.with_notice(Some(format!(
+                            "Gemini auto-rescan disabled: {error} (Ctrl+R to rescan)"
+                        )));
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        }
+        Err(ResolveGeminiRootDirError::HomeDirNotFound) => None,
+    };
+
+    let opencode_watcher = match resolve_opencode_db_path() {
+        Ok(db_path) => {
+            if db_path.is_file() {
+                match watch_sqlite_db_family(&db_path) {
+                    Ok(watcher) => watcher,
+                    Err(error) => {
+                        *model = model.with_notice(Some(format!(
+                            "OpenCode auto-rescan disabled: {error} (Ctrl+R to rescan)"
+                        )));
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        }
+        Err(ResolveOpenCodeDbPathError::HomeDirNotFound) => None,
     };
     let (sessions_scan_tx, sessions_scan_rx) = channel::<SessionsDirScanSignal>();
     let mut sessions_scan_in_flight = false;
@@ -346,10 +407,22 @@ fn run(
                 session_detail_first_change_at = None;
                 session_detail_reload_deadline = None;
 
-                if let Some(log_path) = session_detail_watcher_path.clone() {
-                    session_detail_reload_in_flight_for = Some(log_path.clone());
+                if let crate::app::View::SessionDetail(detail_view) = &model.view {
+                    let session = detail_view.session.clone();
+                    session_detail_reload_in_flight_for = Some(session.log_path.clone());
                     let tx = session_detail_tx.clone();
                     std::thread::spawn(move || {
+                        let log_path = match crate::infra::prepare_session_log_path(&session) {
+                            Ok(path) => path,
+                            Err(error) => {
+                                let _ = tx.send(SessionDetailTimelineSignal::Loaded {
+                                    log_path: session.log_path.clone(),
+                                    result: Err(error.to_string()),
+                                });
+                                return;
+                            }
+                        };
+
                         let result = match load_session_timeline(&log_path) {
                             Ok(timeline) => Ok(timeline),
                             Err(error) => Err(error.to_string()),
@@ -360,7 +433,7 @@ fn run(
             }
         }
 
-        if let Some(watcher) = &watcher {
+        if let Some(watcher) = &codex_watcher {
             while let Some(signal) = watcher.try_recv() {
                 match signal {
                     WatchSignal::Changed => {
@@ -373,6 +446,75 @@ fn run(
                     }
                     WatchSignal::Error(message) => {
                         *model = model.with_notice(Some(format!("Watcher error: {message}")));
+                    }
+                }
+            }
+        }
+
+        if let Some(watcher) = &claude_watcher {
+            while let Some(signal) = watcher.try_recv() {
+                match signal {
+                    WatchSignal::Changed => {
+                        let now = Instant::now();
+                        pending_rescan = true;
+                        rescan_deadline = Some(now + debounce);
+                        if first_change_at.is_none() {
+                            first_change_at = Some(now);
+                        }
+                    }
+                    WatchSignal::Error(message) => {
+                        *model =
+                            model.with_notice(Some(format!("Claude watcher error: {message}")));
+                    }
+                }
+            }
+        }
+
+        if let Some(watcher) = &gemini_watcher {
+            while let Some(signal) = watcher.try_recv() {
+                match signal {
+                    WatchSignal::Changed => {
+                        let now = Instant::now();
+                        pending_rescan = true;
+                        rescan_deadline = Some(now + debounce);
+                        if first_change_at.is_none() {
+                            first_change_at = Some(now);
+                        }
+                    }
+                    WatchSignal::Error(message) => {
+                        *model =
+                            model.with_notice(Some(format!("Gemini watcher error: {message}")));
+                    }
+                }
+            }
+        }
+
+        if let Some(watcher) = &opencode_watcher {
+            while let Some(signal) = watcher.try_recv() {
+                match signal {
+                    WatchSignal::Changed => {
+                        let now = Instant::now();
+                        pending_rescan = true;
+                        rescan_deadline = Some(now + debounce);
+                        if first_change_at.is_none() {
+                            first_change_at = Some(now);
+                        }
+
+                        if matches!(
+                            &model.view,
+                            crate::app::View::SessionDetail(detail_view)
+                                if detail_view.session.engine == crate::domain::SessionEngine::OpenCode
+                        ) {
+                            pending_session_detail_reload = true;
+                            session_detail_reload_deadline = Some(now + session_detail_debounce);
+                            if session_detail_first_change_at.is_none() {
+                                session_detail_first_change_at = Some(now);
+                            }
+                        }
+                    }
+                    WatchSignal::Error(message) => {
+                        *model =
+                            model.with_notice(Some(format!("OpenCode watcher error: {message}")));
                     }
                 }
             }

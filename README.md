@@ -11,7 +11,7 @@ Prototype features:
 - New Session prompt editor (`n`) that spawns Codex/Claude in `Pipes` or `TTY` mode
 - Processes screen (`P`) for stdout/stderr/log viewing + killing spawned agents
 - Attach/detach to spawned `TTY` sessions (`a` to attach, `Ctrl-]` to detach)
-- Auto-rescans when the Codex sessions directory changes (file watcher)
+- Auto-rescans when session sources change (file watcher for Codex/Claude/Gemini/OpenCode)
 
 ## Install
 
