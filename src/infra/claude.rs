@@ -22,6 +22,7 @@ pub struct ClaudeScanOutput {
 }
 
 const MAX_TIMELINE_ITEMS: usize = 10_000;
+const CLAUDE_PROJECT_CONTEXT_PREFIX: &str = "## Project Context";
 
 pub fn load_claude_last_assistant_output(path: &Path) -> io::Result<LastAssistantOutput> {
     let file = File::open(path)?;
@@ -60,6 +61,64 @@ pub fn load_claude_last_assistant_output(path: &Path) -> io::Result<LastAssistan
         output: last_output,
         warnings,
     })
+}
+
+fn derive_claude_session_title(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if is_metadata_prompt(trimmed) {
+        return None;
+    }
+
+    if trimmed.starts_with(CLAUDE_PROJECT_CONTEXT_PREFIX) {
+        return derive_claude_title_from_project_context(trimmed);
+    }
+
+    derive_title_from_user_text(trimmed)
+}
+
+fn derive_claude_title_from_project_context(text: &str) -> Option<String> {
+    for heading in ["## Task", "## Tasks", "## Request", "## Prompt"] {
+        if let Some(line) = extract_first_non_empty_line_after_heading(text, heading) {
+            return Some(line);
+        }
+    }
+    None
+}
+
+fn extract_first_non_empty_line_after_heading(text: &str, heading: &str) -> Option<String> {
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        if line.trim() != heading {
+            continue;
+        }
+
+        for candidate in &mut lines {
+            let candidate = candidate.trim();
+            if candidate.is_empty() {
+                continue;
+            }
+            if candidate.starts_with('#') {
+                break;
+            }
+
+            let candidate = candidate
+                .strip_prefix("- ")
+                .or_else(|| candidate.strip_prefix("* "))
+                .unwrap_or(candidate)
+                .trim();
+            if candidate.is_empty() {
+                continue;
+            }
+            return Some(candidate.to_string());
+        }
+
+        break;
+    }
+
+    None
 }
 
 pub fn load_claude_session_timeline(path: &Path) -> io::Result<SessionTimeline> {
@@ -296,13 +355,12 @@ fn summary_from_index_entry(
     let title = entry
         .summary
         .as_ref()
-        .filter(|s| !s.trim().is_empty())
-        .cloned()
+        .and_then(|text| derive_claude_session_title(text))
         .or_else(|| {
             entry
                 .first_prompt
                 .as_ref()
-                .and_then(|text| derive_title_from_user_text(text))
+                .and_then(|text| derive_claude_session_title(text))
         })
         .or_else(|| scan_claude_session_file_title_hint(&log_path))
         .unwrap_or_else(|| "(untitled)".to_string());
@@ -438,10 +496,7 @@ fn scan_claude_session_file_title_hint(path: &Path) -> Option<String> {
         let Some(text) = parse_claude_user_message_text(&value) else {
             continue;
         };
-        if is_metadata_prompt(&text) {
-            continue;
-        }
-        if let Some(candidate) = derive_title_from_user_text(&text) {
+        if let Some(candidate) = derive_claude_session_title(&text) {
             return Some(candidate);
         }
     }
@@ -493,8 +548,8 @@ fn scan_claude_session_file(path: &Path) -> Result<SessionSummary, ()> {
 
         if title.is_none() {
             if let Some(text) = parse_claude_user_message_text(&value) {
-                if !is_metadata_prompt(&text) {
-                    title = derive_title_from_user_text(&text);
+                if let Some(candidate) = derive_claude_session_title(&text) {
+                    title = Some(candidate);
                 }
             }
         }
@@ -609,6 +664,28 @@ mod tests {
         assert_eq!(output.sessions[0].meta.cwd, PathBuf::from("/tmp/p2"));
         assert_eq!(output.sessions[0].meta.id, "s2");
         assert_eq!(output.sessions[0].title, "first");
+    }
+
+    #[test]
+    fn uses_task_section_title_from_project_context_prompt() {
+        let dir = tempdir().expect("tempdir");
+        let projects_dir = dir.path().join("projects");
+        let key_dir = projects_dir.join("k3");
+        fs::create_dir_all(&key_dir).expect("create");
+
+        let log_path = key_dir.join("s3.jsonl");
+        fs::write(
+            &log_path,
+            r###"{"type":"user","cwd":"/tmp/p3","sessionId":"s3","timestamp":"2026-02-19T00:00:00Z","message":{"content":"## Project Context\nProject: p3\n\n## Task\nRun tests\n"}}"###,
+        )
+        .expect("write");
+
+        let output = scan_claude_projects_dir(&projects_dir);
+        assert_eq!(output.warnings.get(), 0);
+        assert_eq!(output.sessions.len(), 1);
+        assert_eq!(output.sessions[0].meta.cwd, PathBuf::from("/tmp/p3"));
+        assert_eq!(output.sessions[0].meta.id, "s3");
+        assert_eq!(output.sessions[0].title, "Run tests");
     }
 
     #[test]

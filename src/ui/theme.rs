@@ -18,4 +18,5 @@ pub const ACCENT_BG: Color = Color::Rgb(44, 32, 16);
 
 // Semantic colors (keep minimal).
 pub const SUCCESS: Color = Color::Rgb(134, 239, 172); // light green (update hint, running indicator)
+pub const INFO: Color = Color::Rgb(125, 211, 252); // soft sky blue (secondary highlights)
 pub const ERROR: Color = Color::Rgb(248, 113, 113); // soft red

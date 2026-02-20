@@ -1987,12 +1987,38 @@ fn engine_badge_span(engine: crate::domain::SessionEngine) -> Span<'static> {
         crate::domain::SessionEngine::Codex => ("CX ", theme::SUCCESS),
         crate::domain::SessionEngine::Claude => ("CL ", theme::ACCENT),
         crate::domain::SessionEngine::Gemini => ("GM ", theme::MUTED),
-        crate::domain::SessionEngine::OpenCode => ("OC ", theme::DIM),
+        crate::domain::SessionEngine::OpenCode => ("OC ", theme::INFO),
     };
     Span::styled(
         badge,
         Style::default().fg(color).add_modifier(Modifier::BOLD),
     )
+}
+
+#[cfg(test)]
+mod engine_badge_tests {
+    use super::*;
+    use crate::domain::SessionEngine;
+
+    #[test]
+    fn uses_expected_badge_text_for_each_engine() {
+        assert_eq!(
+            engine_badge_span(SessionEngine::Codex).content.as_ref(),
+            "CX "
+        );
+        assert_eq!(
+            engine_badge_span(SessionEngine::Claude).content.as_ref(),
+            "CL "
+        );
+        assert_eq!(
+            engine_badge_span(SessionEngine::Gemini).content.as_ref(),
+            "GM "
+        );
+        assert_eq!(
+            engine_badge_span(SessionEngine::OpenCode).content.as_ref(),
+            "OC "
+        );
+    }
 }
 
 fn project_engine_badge_span(
