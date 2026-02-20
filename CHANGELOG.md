@@ -9,6 +9,14 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.12] - 2026-02-20
+
+### Changes
+
+- Docs: rename screenshot assets and update README references.
+
+### Fixes
+
 ## [0.1.11] - 2026-02-20
 
 ### Changes
