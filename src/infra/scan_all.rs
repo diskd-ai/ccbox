@@ -1,7 +1,8 @@
 use crate::domain::SessionSummary;
 use crate::infra::{
-    ResolveClaudeProjectsDirError, ScanError, ScanWarningCount, resolve_claude_projects_dir,
-    scan_claude_projects_dir, scan_sessions_dir,
+    ResolveClaudeProjectsDirError, ResolveGeminiRootDirError, ScanError, ScanWarningCount,
+    resolve_claude_projects_dir, resolve_gemini_root_dir, scan_claude_projects_dir,
+    scan_gemini_root_dir, scan_sessions_dir,
 };
 use std::path::Path;
 
@@ -21,17 +22,29 @@ pub fn scan_all_sessions(codex_sessions_dir: &Path) -> MultiEngineScanOutput {
         ),
     };
 
-    scan_all_sessions_with_claude_dir(
+    let (gemini_root_dir, gemini_resolve_notice) = match resolve_gemini_root_dir() {
+        Ok(dir) => (Some(dir), None),
+        Err(ResolveGeminiRootDirError::HomeDirNotFound) => (
+            None,
+            Some("Gemini root dir disabled: home directory not found".to_string()),
+        ),
+    };
+
+    scan_all_sessions_with_dirs(
         codex_sessions_dir,
         claude_projects_dir.as_deref(),
         claude_resolve_notice,
+        gemini_root_dir.as_deref(),
+        gemini_resolve_notice,
     )
 }
 
-fn scan_all_sessions_with_claude_dir(
+fn scan_all_sessions_with_dirs(
     codex_sessions_dir: &Path,
     claude_projects_dir: Option<&Path>,
     claude_resolve_notice: Option<String>,
+    gemini_root_dir: Option<&Path>,
+    gemini_resolve_notice: Option<String>,
 ) -> MultiEngineScanOutput {
     let mut sessions: Vec<SessionSummary> = Vec::new();
     let mut warnings = 0usize;
@@ -57,6 +70,19 @@ fn scan_all_sessions_with_claude_dir(
 
     if let Some(projects_dir) = claude_projects_dir {
         let output = scan_claude_projects_dir(projects_dir);
+        warnings += output.warnings.get();
+        sessions.extend(output.sessions);
+        if let Some(notice) = output.notice {
+            notices.push(notice);
+        }
+    }
+
+    if let Some(notice) = gemini_resolve_notice {
+        notices.push(notice);
+    }
+
+    if let Some(root_dir) = gemini_root_dir {
+        let output = scan_gemini_root_dir(root_dir);
         warnings += output.warnings.get();
         sessions.extend(output.sessions);
         if let Some(notice) = output.notice {
@@ -104,8 +130,13 @@ mod tests {
         )
         .expect("write");
 
-        let output =
-            scan_all_sessions_with_claude_dir(&codex_sessions_dir, Some(&claude_projects), None);
+        let output = scan_all_sessions_with_dirs(
+            &codex_sessions_dir,
+            Some(&claude_projects),
+            None,
+            None,
+            None,
+        );
 
         assert_eq!(output.sessions.len(), 1);
         assert!(output.notice.is_some());

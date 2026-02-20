@@ -1,6 +1,6 @@
 # ccbox
 
-Rust TUI “box” for managing coding-agent sessions (Codex + Claude): browse local session logs now, and later reconstruct exactly what the agent did (files, tools, tokens).
+Rust TUI “box” for managing coding-agent sessions (Codex + Claude + Gemini): browse local session logs now, and later reconstruct exactly what the agent did (files, tools, tokens).
 
 ## Status
 
@@ -40,7 +40,7 @@ cargo install --path .
 ![Projects screen showing the menu bar, searchable projects list, and session-count/last-modified columns.](assets/projects.png)
 
 What’s happening / features:
-- Browse projects discovered from your local Codex/Claude session logs.
+- Browse projects discovered from your local Codex/Claude/Gemini session logs.
 - Type to filter (matching text is highlighted); `Esc` clears.
 - Shift+Arrows multi-select; `Del` deletes selected (with confirmation).
 - Project table includes path, session count, and last modified time; `●` indicates a recently modified (“online”) project.
@@ -129,6 +129,8 @@ CLI details:
 
 Optional overrides:
 - `CODEX_SESSIONS_DIR` (defaults to `~/.codex/sessions`; Windows: `%USERPROFILE%\\.codex\\sessions`)
+- `CLAUDE_PROJECTS_DIR` (defaults to `~/.claude/projects`)
+- `CCBOX_GEMINI_DIR` (defaults to `~/.gemini`; sessions are discovered from `tmp/<project-hash>/chats/session-*.json`)
 
 Notes:
 - Spawning sessions requires `codex` on your `$PATH` (and `claude` if you switch engines).

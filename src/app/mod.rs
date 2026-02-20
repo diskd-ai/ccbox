@@ -5,14 +5,14 @@ mod text_editor;
 
 use crate::app::fork::{default_fork_prompt, fork_context_from_timeline_item};
 use crate::domain::{
-    AgentEngine, ForkContext, ProjectIndex, ProjectSummary, SessionStats, SessionSummary,
-    SpawnIoMode, Task, TaskId, TaskImage, TimelineItem, TimelineItemKind, TurnContextSummary,
-    index_projects,
+    AgentEngine, ForkContext, ProjectIndex, ProjectSummary, SessionEngine, SessionStats,
+    SessionSummary, SpawnIoMode, Task, TaskId, TaskImage, TimelineItem, TimelineItemKind,
+    TurnContextSummary, index_projects,
 };
 use crate::infra::{ScanWarningCount, SessionIndex};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 use thiserror::Error;
@@ -3248,22 +3248,12 @@ fn open_delete_confirm(model: &mut AppModel, view: &ProjectsView) {
     });
 }
 
-fn infer_engine_from_log_path(log_path: &Path) -> EngineFilter {
-    if crate::domain::has_path_component(log_path, ".claude") {
-        return EngineFilter::Claude;
-    }
-    if crate::domain::has_path_component(log_path, ".gemini") {
-        return EngineFilter::Gemini;
-    }
-    EngineFilter::Codex
-}
-
 fn session_matches_engine_filter(session: &SessionSummary, filter: EngineFilter) -> bool {
     match filter {
         EngineFilter::All => true,
-        EngineFilter::Codex | EngineFilter::Claude | EngineFilter::Gemini => {
-            infer_engine_from_log_path(&session.log_path) == filter
-        }
+        EngineFilter::Codex => session.engine == SessionEngine::Codex,
+        EngineFilter::Claude => session.engine == SessionEngine::Claude,
+        EngineFilter::Gemini => session.engine == SessionEngine::Gemini,
     }
 }
 
@@ -4492,7 +4482,7 @@ fn update_session_detail(
             }
         }
         KeyCode::Char('f') | KeyCode::Char('F') => {
-            if infer_engine_from_log_path(&view.session.log_path) != EngineFilter::Codex {
+            if view.session.engine != SessionEngine::Codex {
                 model.notice =
                     Some("Fork/resume is only available for Codex sessions.".to_string());
                 model.view = View::SessionDetail(view);
@@ -5010,6 +5000,7 @@ mod multi_select_tests {
 
     fn make_session(project_path: &str, id: &str, log_file: &str) -> SessionSummary {
         SessionSummary {
+            engine: SessionEngine::Codex,
             meta: crate::domain::SessionMeta {
                 id: id.to_string(),
                 cwd: PathBuf::from(project_path),

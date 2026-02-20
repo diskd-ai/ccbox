@@ -1,4 +1,4 @@
-use crate::domain::{ProjectSummary, SessionMeta, SessionSummary};
+use crate::domain::{ProjectSummary, SessionEngine, SessionMeta, SessionSummary};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -125,11 +125,26 @@ pub fn index_projects(sessions: &[SessionSummary]) -> Vec<ProjectSummary> {
             let last_modified = project_sessions
                 .first()
                 .and_then(|session| session.file_modified);
-            ProjectSummary {
-                name: project_path
+
+            let is_gemini_project = project_sessions
+                .iter()
+                .all(|session| session.engine == SessionEngine::Gemini);
+            let name = if is_gemini_project {
+                let hash = project_path
                     .file_name()
                     .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_else(|| project_path.display().to_string()),
+                    .unwrap_or_else(|| project_path.display().to_string());
+                let prefix: String = hash.chars().take(8).collect();
+                format!("gemini:{prefix}")
+            } else {
+                project_path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| project_path.display().to_string())
+            };
+
+            ProjectSummary {
+                name,
                 project_path,
                 sessions: project_sessions,
                 last_modified,
@@ -148,8 +163,10 @@ pub fn make_session_summary(
     title: String,
     file_size_bytes: u64,
     file_modified: Option<SystemTime>,
+    engine: SessionEngine,
 ) -> SessionSummary {
     SessionSummary {
+        engine,
         meta,
         log_path,
         title,

@@ -24,6 +24,13 @@ impl AgentEngine {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionEngine {
+    Codex,
+    Claude,
+    Gemini,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SpawnIoMode {
     Pipes,
     Tty,
@@ -54,6 +61,7 @@ pub struct SessionMeta {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionSummary {
+    pub engine: SessionEngine,
     pub meta: SessionMeta,
     pub log_path: PathBuf,
     pub title: String,

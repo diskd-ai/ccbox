@@ -62,12 +62,13 @@ pub fn default_fork_prompt(fork: &ForkContext) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::SessionMeta;
+    use crate::domain::{SessionEngine, SessionMeta};
     use std::path::PathBuf;
     use std::time::SystemTime;
 
     fn make_session() -> SessionSummary {
         SessionSummary {
+            engine: SessionEngine::Codex,
             meta: SessionMeta {
                 id: "019c72c9-e13d-71b3-b853-5ff79aa22102".to_string(),
                 cwd: PathBuf::from("/tmp/project"),

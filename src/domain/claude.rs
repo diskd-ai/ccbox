@@ -1,7 +1,7 @@
 use crate::domain::{TimelineItem, TimelineItemKind, parse_rfc3339_to_unix_ms};
 use serde::Deserialize;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ClaudeSessionsIndex {
@@ -382,11 +382,6 @@ fn first_non_empty_line(text: &str) -> Option<String> {
         .map(|line| line.to_string())
 }
 
-pub fn has_path_component(path: &Path, component: &str) -> bool {
-    path.components()
-        .any(|c| c.as_os_str() == std::ffi::OsStr::new(component))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,12 +450,5 @@ mod tests {
             parse_claude_user_message_text(&json),
             Some("hello\nworld".to_string())
         );
-    }
-
-    #[test]
-    fn has_path_component_matches_hidden_claude_dir() {
-        let path = PathBuf::from("/Users/a/.claude/projects/x/y.jsonl");
-        assert!(has_path_component(&path, ".claude"));
-        assert!(!has_path_component(&path, ".codex"));
     }
 }

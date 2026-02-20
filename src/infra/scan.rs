@@ -1,6 +1,6 @@
 use crate::domain::{
-    SessionSummary, derive_title_from_user_text, is_metadata_prompt, make_session_summary,
-    parse_session_meta_line, parse_user_message_text,
+    SessionEngine, SessionSummary, derive_title_from_user_text, is_metadata_prompt,
+    make_session_summary, parse_session_meta_line, parse_user_message_text,
 };
 use dirs::home_dir;
 use std::fs::File;
@@ -155,5 +155,6 @@ fn scan_session_file(path: &Path) -> Result<SessionSummary, ScanError> {
         display_title,
         file_size_bytes,
         file_modified,
+        SessionEngine::Codex,
     ))
 }

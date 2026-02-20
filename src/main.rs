@@ -1786,6 +1786,7 @@ fn build_session_summary_from_log_path(
         title,
         file_size_bytes,
         file_modified,
+        crate::domain::SessionEngine::Codex,
     ))
 }
 

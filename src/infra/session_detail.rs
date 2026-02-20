@@ -38,8 +38,14 @@ pub fn load_last_assistant_output(
         .into());
     }
 
-    if is_claude_log_path(path) {
-        return Ok(super::claude::load_claude_last_assistant_output(path)?);
+    match detect_log_format(path) {
+        LogFormat::Gemini => {
+            return Ok(super::gemini::load_gemini_last_assistant_output(path)?);
+        }
+        LogFormat::Claude => {
+            return Ok(super::claude::load_claude_last_assistant_output(path)?);
+        }
+        LogFormat::Codex => {}
     }
 
     let file = File::open(path)?;
@@ -97,8 +103,14 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
         .into());
     }
 
-    if is_claude_log_path(path) {
-        return Ok(super::claude::load_claude_session_timeline(path)?);
+    match detect_log_format(path) {
+        LogFormat::Gemini => {
+            return Ok(super::gemini::load_gemini_session_timeline(path)?);
+        }
+        LogFormat::Claude => {
+            return Ok(super::claude::load_claude_session_timeline(path)?);
+        }
+        LogFormat::Codex => {}
     }
 
     let file = File::open(path)?;
@@ -261,8 +273,47 @@ fn short_id(value: &str) -> String {
     value.chars().take(max).collect()
 }
 
-fn is_claude_log_path(path: &Path) -> bool {
-    crate::domain::has_path_component(path, ".claude")
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LogFormat {
+    Codex,
+    Claude,
+    Gemini,
+}
+
+fn detect_log_format(path: &Path) -> LogFormat {
+    if super::gemini::is_gemini_session_path(path) {
+        return LogFormat::Gemini;
+    }
+    if looks_like_claude_jsonl(path) {
+        return LogFormat::Claude;
+    }
+    LogFormat::Codex
+}
+
+fn looks_like_claude_jsonl(path: &Path) -> bool {
+    let Some(value) = read_first_jsonl_value(path) else {
+        return false;
+    };
+    let line_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    matches!(
+        line_type,
+        "user" | "assistant" | "summary" | "progress" | "file-history-snapshot"
+    )
+}
+
+fn read_first_jsonl_value(path: &Path) -> Option<serde_json::Value> {
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    for line_result in reader.lines().take(20) {
+        let line = line_result.ok()?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+        return Some(value);
+    }
+    None
 }
 
 #[cfg(test)]

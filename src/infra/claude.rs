@@ -1,8 +1,8 @@
 use crate::domain::{
-    ClaudeSessionsIndexEntry, SessionMeta, SessionSummary, SessionTimeline, TimelineItemKind,
-    derive_title_from_user_text, extract_claude_session_meta_hint, is_metadata_prompt,
-    make_session_summary, parse_claude_sessions_index, parse_claude_timeline_items,
-    parse_claude_user_message_text,
+    ClaudeSessionsIndexEntry, SessionEngine, SessionMeta, SessionSummary, SessionTimeline,
+    TimelineItemKind, derive_title_from_user_text, extract_claude_session_meta_hint,
+    is_metadata_prompt, make_session_summary, parse_claude_sessions_index,
+    parse_claude_timeline_items, parse_claude_user_message_text,
 };
 use crate::infra::{LastAssistantOutput, ScanWarningCount};
 use dirs::home_dir;
@@ -317,6 +317,7 @@ fn summary_from_index_entry(
         title,
         file_size_bytes,
         file_modified,
+        SessionEngine::Claude,
     ))
 }
 
@@ -526,6 +527,7 @@ fn scan_claude_session_file(path: &Path) -> Result<SessionSummary, ()> {
         display_title,
         file_size_bytes,
         file_modified,
+        SessionEngine::Claude,
     ))
 }
 

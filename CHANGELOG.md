@@ -9,6 +9,17 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.14] - 2026-02-20
+
+### Changes
+
+- TUI/CLI: index and browse Gemini sessions from `~/.gemini/tmp` (Engine filter: Gemini).
+- CLI/TUI: add `CCBOX_GEMINI_DIR` to override the Gemini root directory.
+
+### Fixes
+
+- TUI/CLI: detect Claude session logs by format (works with `CLAUDE_PROJECTS_DIR` overrides).
+
 ## [0.1.13] - 2026-02-20
 
 ### Changes

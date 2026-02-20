@@ -1,4 +1,4 @@
-use crate::domain::SessionSummary;
+use crate::domain::{SessionEngine, SessionSummary};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -108,7 +108,11 @@ pub fn refresh_session_index(sessions: &[SessionSummary], prior: &SessionIndex) 
             }
         }
 
-        let (total_tokens, last_tokens) = extract_last_token_usage(&session.log_path);
+        let (total_tokens, last_tokens) = if session.engine == SessionEngine::Codex {
+            extract_last_token_usage(&session.log_path)
+        } else {
+            (None, None)
+        };
         next_entries.insert(
             log_path,
             SessionIndexEntry {
