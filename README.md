@@ -37,40 +37,60 @@ cargo install --path .
 
 ### Projects
 
-![Projects screen showing local session-log projects with live “online” indicators and type-to-filter search.](assets/projects.png)
+![Projects screen showing the menu bar, searchable projects list, and session-count/last-modified columns.](assets/sessions-2026-02-20.png)
 
 What’s happening / features:
-- Browse all discovered projects under your sessions directory.
-- Type to filter; `Esc` clears.
-- `●` indicates a recently modified (“online”) project.
+- Browse projects discovered under your sessions directory.
+- Type to filter (matching text is highlighted); `Esc` clears.
+- Shift+Arrows multi-select; `Del` deletes selected (with confirmation).
+- Project table includes path, session count, and last modified time; `●` indicates a recently modified (“online”) project.
 
-### Sessions
+### Menu bar
 
-![Sessions screen showing a project’s sessions list with navigation, quick “result” access, and delete controls.](assets/sessions.png)
+![Menu bar with the Window menu open, showing available screens and shortcuts.](assets/sesisons-menu-2026-02-20.png)
 
 What’s happening / features:
-- Browse sessions for the selected project and open them with `Enter`.
-- `Space` jumps to the newest “last Out” result.
-- Delete logs with `Del`/`Backspace` (with confirmation).
+- `F2` opens the menu; arrows/Enter (and mouse) navigate.
+- The Engine menu (Projects/Sessions) filters by agent engine: All/Codex/Claude/Gemini.
+- The Window menu provides shortcuts to every screen.
 
 ### Session Detail (timeline)
 
-![Session Detail timeline screen showing chronological events with expandable details and context window controls.](assets/timeline.png)
+![Session Detail screen showing the timeline (left) and details (right) with focus styling and scrollbars.](assets/timeline-2026-02-20.png)
 
 What’s happening / features:
-- Timeline view of the session: messages, outputs, and other events in order.
-- Details are always expanded; `Enter` jumps Tool → ToolOut; `c` adjusts the visible context window.
-- `o` copies/opens the last “Out” result quickly.
-- `f` forks/resumes Codex from the selected Turn/User/Out/ToolOut record (mid-session resume).
+- Timeline shows session events in order; details are always expanded.
+- `Tab` switches focus (focused pane uses a double border); scrollbars indicate overflow.
+- `Enter` jumps Tool → ToolOut; `o` previews the last Out; `F3` opens statistics.
 
-### New Session
+### Session actions (fork/resume)
 
-![New Session prompt editor screen showing a multi-line prompt with engine switching and send controls.](assets/new-session.png)
+![Session menu showing actions like fork/resume, focus switching, result preview, and visible context.](assets/fork.png)
 
 What’s happening / features:
-- Paste/edit a prompt, then spawn Codex/Claude in the background.
-- `Shift+Tab` switches engine; `F4` switches `Pipes`/`TTY`; `Ctrl+Enter`/`Cmd+Enter` sends.
-- Fork Resume: press `f` in Session Detail to open a fork-resume prompt editor (engine/I/O are locked for resume).
+- Fork/resume Codex from a selected Turn/User/Out/ToolOut record.
+- Toggle Visible Context for the current turn.
+
+### Session stats
+
+![Session statistics window with duration, tokens, tool usage, and change summary.](assets/sessions-stat-2026-02-20.png)
+
+What’s happening / features:
+- Time spent, token usage, tool-call breakdown (success/error/unknown), and `apply_patch` changes.
+
+### Tasks
+
+![Tasks screen showing tasks list with engine, project path, and image counts.](assets/task-queue-2026-02-20.png)
+
+What’s happening / features:
+- Type to filter; `n` creates; `Ctrl+Enter` spawns; Shift+Tab switches engine.
+
+### Processes
+
+![Processes screen showing spawned background agents with status and quick access to outputs.](assets/background-processing-2026-02-20.png)
+
+What’s happening / features:
+- View output (`s`/`e`/`l`), kill (`k`), attach (`a`), and open the related session.
 
 ## Roadmap
 
