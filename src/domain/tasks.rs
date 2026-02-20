@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TaskId(String);
 
 impl TaskId {

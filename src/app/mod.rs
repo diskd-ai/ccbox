@@ -11,8 +11,9 @@ use crate::domain::{
 };
 use crate::infra::{ScanWarningCount, SessionIndex};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 use thiserror::Error;
@@ -27,6 +28,25 @@ pub enum AppError {
 
     #[error(transparent)]
     ResolveSessionsDir(#[from] crate::infra::ResolveSessionsDirError),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EngineFilter {
+    All,
+    Codex,
+    Claude,
+    Gemini,
+}
+
+impl EngineFilter {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Codex => "Codex",
+            Self::Claude => "Claude",
+            Self::Gemini => "Gemini",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -69,11 +89,15 @@ pub struct AppModel {
     pub terminal_size: (u16, u16),
     pub notice: Option<String>,
     pub update_hint: Option<String>,
+    pub engine_filter: EngineFilter,
     pub help_open: bool,
     pub system_menu: Option<SystemMenuOverlay>,
     pub delete_confirm: Option<DeleteConfirmDialog>,
+    pub delete_projects_confirm: Option<DeleteProjectsConfirmDialog>,
     pub delete_session_confirm: Option<DeleteSessionConfirmDialog>,
+    pub delete_sessions_confirm: Option<DeleteSessionsConfirmDialog>,
     pub delete_task_confirm: Option<DeleteTaskConfirmDialog>,
+    pub delete_tasks_confirm: Option<DeleteTasksConfirmDialog>,
     pub session_result_preview: Option<SessionResultPreviewOverlay>,
     pub session_stats_overlay: Option<SessionStatsOverlay>,
     pub project_stats_overlay: Option<ProjectStatsOverlay>,
@@ -94,11 +118,15 @@ impl AppModel {
             terminal_size: (0, 0),
             notice: None,
             update_hint: None,
+            engine_filter: EngineFilter::All,
             help_open: false,
             system_menu: None,
             delete_confirm: None,
+            delete_projects_confirm: None,
             delete_session_confirm: None,
+            delete_sessions_confirm: None,
             delete_task_confirm: None,
+            delete_tasks_confirm: None,
             session_result_preview: None,
             session_stats_overlay: None,
             project_stats_overlay: None,
@@ -115,11 +143,15 @@ impl AppModel {
                 terminal_size: self.terminal_size,
                 notice: None,
                 update_hint: self.update_hint.clone(),
+                engine_filter: self.engine_filter,
                 help_open: self.help_open,
                 system_menu: self.system_menu.clone(),
                 delete_confirm: self.delete_confirm.clone(),
+                delete_projects_confirm: self.delete_projects_confirm.clone(),
                 delete_session_confirm: self.delete_session_confirm.clone(),
+                delete_sessions_confirm: self.delete_sessions_confirm.clone(),
                 delete_task_confirm: self.delete_task_confirm.clone(),
+                delete_tasks_confirm: self.delete_tasks_confirm.clone(),
                 session_result_preview: self.session_result_preview.clone(),
                 session_stats_overlay: self.session_stats_overlay.clone(),
                 project_stats_overlay: self.project_stats_overlay.clone(),
@@ -127,159 +159,202 @@ impl AppModel {
             };
         }
 
-        let view =
-            match &self.view {
-                View::Projects(projects_view) => {
-                    let selected_project_path = projects_view
-                        .filtered_indices
-                        .get(projects_view.selected)
-                        .copied()
-                        .and_then(|index| self.data.projects.get(index))
-                        .map(|project| project.project_path.clone());
+        let view = match &self.view {
+            View::Projects(projects_view) => {
+                let selected_project_path = projects_view
+                    .filtered_indices
+                    .get(projects_view.selected)
+                    .copied()
+                    .and_then(|index| self.data.projects.get(index))
+                    .map(|project| project.project_path.clone());
 
-                    let mut next_view = ProjectsView {
-                        query: projects_view.query.clone(),
-                        filtered_indices: Vec::new(),
-                        selected: projects_view.selected,
-                    };
-                    apply_project_filter(&data.projects, &mut next_view);
+                let mut next_view = ProjectsView {
+                    query: projects_view.query.clone(),
+                    filtered_indices: Vec::new(),
+                    selected: projects_view.selected,
+                    selection_anchor: projects_view.selection_anchor.clone(),
+                    selected_project_paths: projects_view.selected_project_paths.clone(),
+                };
+                apply_project_filter(&data.projects, &mut next_view, self.engine_filter);
+                prune_project_selection(&data.projects, &mut next_view);
 
-                    if let Some(path) = selected_project_path {
-                        if let Some(pos) = next_view.filtered_indices.iter().position(|index| {
-                            data.projects
-                                .get(*index)
-                                .is_some_and(|project| project.project_path == path)
-                        }) {
-                            next_view.selected = pos;
-                        }
-                    }
-
-                    View::Projects(next_view)
-                }
-                View::Sessions(sessions_view) => {
-                    let selected_log_path = self
-                        .data
-                        .projects
-                        .iter()
-                        .find(|project| project.project_path == sessions_view.project_path)
-                        .and_then(|project| {
-                            sessions_view
-                                .filtered_indices
-                                .get(sessions_view.session_selected)
-                                .copied()
-                                .and_then(|index| project.sessions.get(index))
-                        })
-                        .map(|session| session.log_path.clone());
-
-                    match data
-                        .projects
-                        .iter()
-                        .find(|project| project.project_path == sessions_view.project_path)
-                    {
-                        Some(project) => {
-                            let mut next_view = sessions_view.clone();
-                            apply_session_filter(&project.sessions, &mut next_view);
-                            if let Some(log_path) = selected_log_path {
-                                if let Some(session_index) = project
-                                    .sessions
-                                    .iter()
-                                    .position(|session| session.log_path == log_path)
-                                {
-                                    if let Some(pos) = next_view
-                                        .filtered_indices
-                                        .iter()
-                                        .position(|index| *index == session_index)
-                                    {
-                                        next_view.session_selected = pos;
-                                    }
-                                }
-                            }
-
-                            View::Sessions(next_view)
-                        }
-                        None => View::Projects(ProjectsView::new(&data.projects)),
-                    }
-                }
-                View::NewSession(new_session_view) => {
-                    let selected_log_path = self
-                        .data
-                        .projects
-                        .iter()
-                        .find(|project| {
-                            project.project_path == new_session_view.from_sessions.project_path
-                        })
-                        .and_then(|project| {
-                            let from = &new_session_view.from_sessions;
-                            from.filtered_indices
-                                .get(from.session_selected)
-                                .copied()
-                                .and_then(|index| project.sessions.get(index))
-                        })
-                        .map(|session| session.log_path.clone());
-
-                    match data.projects.iter().find(|project| {
-                        project.project_path == new_session_view.from_sessions.project_path
+                if let Some(path) = selected_project_path {
+                    if let Some(pos) = next_view.filtered_indices.iter().position(|index| {
+                        data.projects
+                            .get(*index)
+                            .is_some_and(|project| project.project_path == path)
                     }) {
-                        Some(project) => {
-                            let mut next_view = new_session_view.clone();
-                            apply_session_filter(&project.sessions, &mut next_view.from_sessions);
-
-                            if let Some(log_path) = selected_log_path {
-                                if let Some(session_index) = project
-                                    .sessions
-                                    .iter()
-                                    .position(|session| session.log_path == log_path)
-                                {
-                                    if let Some(pos) = next_view
-                                        .from_sessions
-                                        .filtered_indices
-                                        .iter()
-                                        .position(|index| *index == session_index)
-                                    {
-                                        next_view.from_sessions.session_selected = pos;
-                                    }
-                                }
-                            }
-                            View::NewSession(next_view)
-                        }
-                        None => View::Projects(ProjectsView::new(&data.projects)),
+                        next_view.selected = pos;
                     }
                 }
-                View::SessionDetail(detail_view) => {
-                    match data
-                        .projects
-                        .iter()
-                        .find(|project| project.project_path == detail_view.session.meta.cwd)
-                    {
-                        Some(project) => {
-                            let mut next_view = detail_view.clone();
-                            apply_session_filter(&project.sessions, &mut next_view.from_sessions);
-                            if let Some(pos) = project.sessions.iter().position(|session| {
-                                session.log_path == detail_view.session.log_path
-                            }) {
-                                next_view.from_sessions.session_selected = next_view
+
+                View::Projects(next_view)
+            }
+            View::Sessions(sessions_view) => {
+                let selected_log_path = self
+                    .data
+                    .projects
+                    .iter()
+                    .find(|project| project.project_path == sessions_view.project_path)
+                    .and_then(|project| {
+                        sessions_view
+                            .filtered_indices
+                            .get(sessions_view.session_selected)
+                            .copied()
+                            .and_then(|index| project.sessions.get(index))
+                    })
+                    .map(|session| session.log_path.clone());
+
+                match data
+                    .projects
+                    .iter()
+                    .find(|project| project.project_path == sessions_view.project_path)
+                {
+                    Some(project) => {
+                        let mut next_view = sessions_view.clone();
+                        apply_session_filter(&project.sessions, &mut next_view, self.engine_filter);
+                        prune_sessions_selection(&project.sessions, &mut next_view);
+                        if let Some(log_path) = selected_log_path {
+                            if let Some(session_index) = project
+                                .sessions
+                                .iter()
+                                .position(|session| session.log_path == log_path)
+                            {
+                                if let Some(pos) = next_view
+                                    .filtered_indices
+                                    .iter()
+                                    .position(|index| *index == session_index)
+                                {
+                                    next_view.session_selected = pos;
+                                }
+                            }
+                        }
+
+                        View::Sessions(next_view)
+                    }
+                    None => {
+                        let mut projects_view = ProjectsView::new(&data.projects);
+                        apply_project_filter(
+                            &data.projects,
+                            &mut projects_view,
+                            self.engine_filter,
+                        );
+                        View::Projects(projects_view)
+                    }
+                }
+            }
+            View::NewSession(new_session_view) => {
+                let selected_log_path = self
+                    .data
+                    .projects
+                    .iter()
+                    .find(|project| {
+                        project.project_path == new_session_view.from_sessions.project_path
+                    })
+                    .and_then(|project| {
+                        let from = &new_session_view.from_sessions;
+                        from.filtered_indices
+                            .get(from.session_selected)
+                            .copied()
+                            .and_then(|index| project.sessions.get(index))
+                    })
+                    .map(|session| session.log_path.clone());
+
+                match data.projects.iter().find(|project| {
+                    project.project_path == new_session_view.from_sessions.project_path
+                }) {
+                    Some(project) => {
+                        let mut next_view = new_session_view.clone();
+                        apply_session_filter(
+                            &project.sessions,
+                            &mut next_view.from_sessions,
+                            self.engine_filter,
+                        );
+                        prune_sessions_selection(&project.sessions, &mut next_view.from_sessions);
+
+                        if let Some(log_path) = selected_log_path {
+                            if let Some(session_index) = project
+                                .sessions
+                                .iter()
+                                .position(|session| session.log_path == log_path)
+                            {
+                                if let Some(pos) = next_view
                                     .from_sessions
                                     .filtered_indices
                                     .iter()
-                                    .position(|index| *index == pos)
-                                    .unwrap_or(0);
-                                if let Some(session) = project.sessions.get(pos).cloned() {
-                                    next_view.session = session;
+                                    .position(|index| *index == session_index)
+                                {
+                                    next_view.from_sessions.session_selected = pos;
                                 }
                             }
-
-                            View::SessionDetail(next_view)
                         }
-                        None => View::Projects(ProjectsView::new(&data.projects)),
+                        View::NewSession(next_view)
+                    }
+                    None => {
+                        let mut projects_view = ProjectsView::new(&data.projects);
+                        apply_project_filter(
+                            &data.projects,
+                            &mut projects_view,
+                            self.engine_filter,
+                        );
+                        View::Projects(projects_view)
                     }
                 }
-                View::Tasks(tasks_view) => View::Tasks(tasks_view.clone()),
-                View::TaskCreate(task_create_view) => View::TaskCreate(task_create_view.clone()),
-                View::TaskDetail(task_detail_view) => View::TaskDetail(task_detail_view.clone()),
-                View::Processes(processes_view) => View::Processes(processes_view.clone()),
-                View::ProcessOutput(output_view) => View::ProcessOutput(output_view.clone()),
-                View::Error => View::Projects(ProjectsView::new(&data.projects)),
-            };
+            }
+            View::SessionDetail(detail_view) => {
+                match data
+                    .projects
+                    .iter()
+                    .find(|project| project.project_path == detail_view.session.meta.cwd)
+                {
+                    Some(project) => {
+                        let mut next_view = detail_view.clone();
+                        apply_session_filter(
+                            &project.sessions,
+                            &mut next_view.from_sessions,
+                            self.engine_filter,
+                        );
+                        prune_sessions_selection(&project.sessions, &mut next_view.from_sessions);
+                        if let Some(pos) = project
+                            .sessions
+                            .iter()
+                            .position(|session| session.log_path == detail_view.session.log_path)
+                        {
+                            next_view.from_sessions.session_selected = next_view
+                                .from_sessions
+                                .filtered_indices
+                                .iter()
+                                .position(|index| *index == pos)
+                                .unwrap_or(0);
+                            if let Some(session) = project.sessions.get(pos).cloned() {
+                                next_view.session = session;
+                            }
+                        }
+
+                        View::SessionDetail(next_view)
+                    }
+                    None => {
+                        let mut projects_view = ProjectsView::new(&data.projects);
+                        apply_project_filter(
+                            &data.projects,
+                            &mut projects_view,
+                            self.engine_filter,
+                        );
+                        View::Projects(projects_view)
+                    }
+                }
+            }
+            View::Tasks(tasks_view) => View::Tasks(tasks_view.clone()),
+            View::TaskCreate(task_create_view) => View::TaskCreate(task_create_view.clone()),
+            View::TaskDetail(task_detail_view) => View::TaskDetail(task_detail_view.clone()),
+            View::Processes(processes_view) => View::Processes(processes_view.clone()),
+            View::ProcessOutput(output_view) => View::ProcessOutput(output_view.clone()),
+            View::Error => {
+                let mut projects_view = ProjectsView::new(&data.projects);
+                apply_project_filter(&data.projects, &mut projects_view, self.engine_filter);
+                View::Projects(projects_view)
+            }
+        };
 
         Self {
             data,
@@ -288,11 +363,15 @@ impl AppModel {
             terminal_size: self.terminal_size,
             notice: None,
             update_hint: self.update_hint.clone(),
+            engine_filter: self.engine_filter,
             help_open: self.help_open,
             system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
+            delete_projects_confirm: self.delete_projects_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
+            delete_sessions_confirm: self.delete_sessions_confirm.clone(),
             delete_task_confirm: self.delete_task_confirm.clone(),
+            delete_tasks_confirm: self.delete_tasks_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
             project_stats_overlay: self.project_stats_overlay.clone(),
@@ -308,11 +387,15 @@ impl AppModel {
             terminal_size: (width, height),
             notice: self.notice.clone(),
             update_hint: self.update_hint.clone(),
+            engine_filter: self.engine_filter,
             help_open: self.help_open,
             system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
+            delete_projects_confirm: self.delete_projects_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
+            delete_sessions_confirm: self.delete_sessions_confirm.clone(),
             delete_task_confirm: self.delete_task_confirm.clone(),
+            delete_tasks_confirm: self.delete_tasks_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
             project_stats_overlay: self.project_stats_overlay.clone(),
@@ -328,11 +411,15 @@ impl AppModel {
             terminal_size: self.terminal_size,
             notice,
             update_hint: self.update_hint.clone(),
+            engine_filter: self.engine_filter,
             help_open: self.help_open,
             system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
+            delete_projects_confirm: self.delete_projects_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
+            delete_sessions_confirm: self.delete_sessions_confirm.clone(),
             delete_task_confirm: self.delete_task_confirm.clone(),
+            delete_tasks_confirm: self.delete_tasks_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
             project_stats_overlay: self.project_stats_overlay.clone(),
@@ -361,11 +448,15 @@ impl AppModel {
             terminal_size: self.terminal_size,
             notice: None,
             update_hint: self.update_hint.clone(),
+            engine_filter: self.engine_filter,
             help_open: self.help_open,
             system_menu: self.system_menu.clone(),
             delete_confirm: self.delete_confirm.clone(),
+            delete_projects_confirm: self.delete_projects_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
+            delete_sessions_confirm: self.delete_sessions_confirm.clone(),
             delete_task_confirm: self.delete_task_confirm.clone(),
+            delete_tasks_confirm: self.delete_tasks_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
             session_stats_overlay: self.session_stats_overlay.clone(),
             project_stats_overlay: self.project_stats_overlay.clone(),
@@ -449,6 +540,7 @@ pub enum MainMenu {
     /// Requirement: every distinct screen/window should be reachable from the Window menu.
     /// When adding a new `View` variant or a new popup window, add a Window menu entry.
     Window,
+    Engine,
     Projects,
     Sessions,
     NewSession,
@@ -466,6 +558,7 @@ impl MainMenu {
         match self {
             Self::System => "System",
             Self::Window => "Window",
+            Self::Engine => "Engine",
             Self::Projects => "Projects",
             Self::Sessions => "Sessions",
             Self::NewSession => "New Session",
@@ -662,6 +755,41 @@ pub const MAIN_MENU_WINDOW_ITEMS: [MainMenuEntry; 13] = [
         hotkey: "F1 or ?",
         key: MainMenuKey {
             code: KeyCode::F(1),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+];
+
+pub const MAIN_MENU_ENGINE_ITEMS: [MainMenuEntry; 4] = [
+    MainMenuEntry {
+        label: "All",
+        hotkey: "",
+        key: MainMenuKey {
+            code: KeyCode::F(2),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Codex",
+        hotkey: "",
+        key: MainMenuKey {
+            code: KeyCode::F(2),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Claude",
+        hotkey: "",
+        key: MainMenuKey {
+            code: KeyCode::F(2),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Gemini",
+        hotkey: "",
+        key: MainMenuKey {
+            code: KeyCode::F(2),
             modifiers: KeyModifiers::NONE,
         },
     },
@@ -898,7 +1026,7 @@ pub const MAIN_MENU_TASKS_ITEMS: [MainMenuEntry; 6] = [
     },
 ];
 
-pub const MAIN_MENU_TASK_CREATE_ITEMS: [MainMenuEntry; 4] = [
+pub const MAIN_MENU_TASK_CREATE_ITEMS: [MainMenuEntry; 5] = [
     MainMenuEntry {
         label: "Save",
         hotkey: "Ctrl+S or Cmd+S",
@@ -912,6 +1040,14 @@ pub const MAIN_MENU_TASK_CREATE_ITEMS: [MainMenuEntry; 4] = [
         hotkey: "Ctrl+I or Cmd+I",
         key: MainMenuKey {
             code: KeyCode::Char('i'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Paste image",
+        hotkey: "Ctrl+V",
+        key: MainMenuKey {
+            code: KeyCode::Char('v'),
             modifiers: KeyModifiers::CONTROL,
         },
     },
@@ -1089,10 +1225,18 @@ pub const MAIN_MENU_ERROR_ITEMS: [MainMenuEntry; 2] = [
     },
 ];
 
-pub const MAIN_MENUS_PROJECTS: [MainMenu; 3] =
-    [MainMenu::System, MainMenu::Window, MainMenu::Projects];
-pub const MAIN_MENUS_SESSIONS: [MainMenu; 3] =
-    [MainMenu::System, MainMenu::Window, MainMenu::Sessions];
+pub const MAIN_MENUS_PROJECTS: [MainMenu; 4] = [
+    MainMenu::System,
+    MainMenu::Window,
+    MainMenu::Engine,
+    MainMenu::Projects,
+];
+pub const MAIN_MENUS_SESSIONS: [MainMenu; 4] = [
+    MainMenu::System,
+    MainMenu::Window,
+    MainMenu::Engine,
+    MainMenu::Sessions,
+];
 pub const MAIN_MENUS_NEW_SESSION: [MainMenu; 3] =
     [MainMenu::System, MainMenu::Window, MainMenu::NewSession];
 pub const MAIN_MENUS_SESSION_DETAIL: [MainMenu; 3] =
@@ -1127,6 +1271,7 @@ pub fn main_menu_items(menu: MainMenu) -> &'static [MainMenuEntry] {
     match menu {
         MainMenu::System => &MAIN_MENU_SYSTEM_ITEMS,
         MainMenu::Window => &MAIN_MENU_WINDOW_ITEMS,
+        MainMenu::Engine => &MAIN_MENU_ENGINE_ITEMS,
         MainMenu::Projects => &MAIN_MENU_PROJECTS_ITEMS,
         MainMenu::Sessions => &MAIN_MENU_SESSIONS_ITEMS,
         MainMenu::NewSession => &MAIN_MENU_NEW_SESSION_ITEMS,
@@ -1171,6 +1316,15 @@ pub struct DeleteConfirmDialog {
 }
 
 #[derive(Clone, Debug)]
+pub struct DeleteProjectsConfirmDialog {
+    pub project_paths: Vec<PathBuf>,
+    pub project_count: usize,
+    pub session_count: usize,
+    pub total_size_bytes: u64,
+    pub selection: DeleteConfirmSelection,
+}
+
+#[derive(Clone, Debug)]
 pub struct DeleteSessionConfirmDialog {
     pub project_name: String,
     pub project_path: PathBuf,
@@ -1182,10 +1336,28 @@ pub struct DeleteSessionConfirmDialog {
 }
 
 #[derive(Clone, Debug)]
+pub struct DeleteSessionsConfirmDialog {
+    pub project_name: String,
+    pub project_path: PathBuf,
+    pub log_paths: Vec<PathBuf>,
+    pub session_count: usize,
+    pub total_size_bytes: u64,
+    pub selection: DeleteConfirmSelection,
+}
+
+#[derive(Clone, Debug)]
 pub struct DeleteTaskConfirmDialog {
     pub task_id: TaskId,
     pub task_title: String,
     pub project_path: PathBuf,
+    pub selection: DeleteConfirmSelection,
+    pub return_to_tasks: TasksView,
+}
+
+#[derive(Clone, Debug)]
+pub struct DeleteTasksConfirmDialog {
+    pub task_ids: Vec<TaskId>,
+    pub task_count: usize,
     pub selection: DeleteConfirmSelection,
     pub return_to_tasks: TasksView,
 }
@@ -1294,6 +1466,8 @@ pub struct ProjectsView {
     pub query: String,
     pub filtered_indices: Vec<usize>,
     pub selected: usize,
+    pub selection_anchor: Option<PathBuf>,
+    pub selected_project_paths: BTreeSet<PathBuf>,
 }
 
 impl ProjectsView {
@@ -1303,6 +1477,8 @@ impl ProjectsView {
             query: String::new(),
             filtered_indices,
             selected: 0,
+            selection_anchor: None,
+            selected_project_paths: BTreeSet::new(),
         }
     }
 }
@@ -1313,6 +1489,8 @@ pub struct SessionsView {
     pub query: String,
     pub filtered_indices: Vec<usize>,
     pub session_selected: usize,
+    pub selection_anchor: Option<PathBuf>,
+    pub selected_log_paths: BTreeSet<PathBuf>,
 }
 
 impl SessionsView {
@@ -1322,6 +1500,8 @@ impl SessionsView {
             query: String::new(),
             filtered_indices: (0..session_count).collect(),
             session_selected: 0,
+            selection_anchor: None,
+            selected_log_paths: BTreeSet::new(),
         }
     }
 
@@ -1404,6 +1584,8 @@ pub struct TasksView {
     pub query: String,
     pub filtered_indices: Vec<usize>,
     pub selected: usize,
+    pub selection_anchor: Option<TaskId>,
+    pub selected_task_ids: BTreeSet<TaskId>,
     pub engine: AgentEngine,
 }
 
@@ -1416,6 +1598,8 @@ impl TasksView {
             query: String::new(),
             filtered_indices,
             selected: 0,
+            selection_anchor: None,
+            selected_task_ids: BTreeSet::new(),
             engine: AgentEngine::Codex,
         }
     }
@@ -1424,6 +1608,7 @@ impl TasksView {
         let selected_id = selected_task_id(&self);
         self.tasks = tasks;
         apply_task_filter(&mut self);
+        prune_task_selection(&mut self);
 
         if let Some(task_id) = selected_id {
             if let Some(pos) = self.filtered_indices.iter().position(|index| {
@@ -1542,6 +1727,10 @@ pub enum AppCommand {
         from_tasks: TasksView,
         task_id: TaskId,
     },
+    DeleteTasksBatch {
+        from_tasks: TasksView,
+        task_ids: Vec<TaskId>,
+    },
     SpawnTask {
         engine: AgentEngine,
         task_id: TaskId,
@@ -1549,6 +1738,7 @@ pub enum AppCommand {
     TaskCreateInsertImage {
         path: PathBuf,
     },
+    TaskCreatePasteImageFromClipboard,
     OpenSessionDetail {
         from_sessions: SessionsView,
         session: SessionSummary,
@@ -1566,8 +1756,14 @@ pub enum AppCommand {
     DeleteProjectLogs {
         project_path: PathBuf,
     },
+    DeleteProjectLogsBatch {
+        project_paths: Vec<PathBuf>,
+    },
     DeleteSessionLog {
         log_path: PathBuf,
+    },
+    DeleteSessionLogsBatch {
+        log_paths: Vec<PathBuf>,
     },
     SpawnAgentSession {
         engine: AgentEngine,
@@ -1621,8 +1817,11 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         if model.help_open
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
+            || model.delete_projects_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_sessions_confirm.is_some()
             || model.delete_task_confirm.is_some()
+            || model.delete_tasks_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1630,7 +1829,9 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
             return (model, AppCommand::None);
         }
 
-        model.view = View::Projects(ProjectsView::new(&model.data.projects));
+        let mut view = ProjectsView::new(&model.data.projects);
+        apply_project_filter(&model.data.projects, &mut view, model.engine_filter);
+        model.view = View::Projects(view);
         model.help_open = false;
         model.system_menu = None;
         return (model, AppCommand::None);
@@ -1640,8 +1841,11 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         if model.help_open
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
+            || model.delete_projects_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_sessions_confirm.is_some()
             || model.delete_task_confirm.is_some()
+            || model.delete_tasks_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1649,10 +1853,14 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
             return (model, AppCommand::None);
         }
 
-        let Some(sessions_view) = infer_sessions_view_for_window_menu(&model) else {
+        let Some(mut sessions_view) = infer_sessions_view_for_window_menu(&model) else {
             model.notice = Some("No project selected.".to_string());
             return (model, AppCommand::None);
         };
+
+        if let Some(project) = sessions_view.current_project(&model.data.projects) {
+            apply_session_filter(&project.sessions, &mut sessions_view, model.engine_filter);
+        }
 
         model.view = View::Sessions(sessions_view);
         model.help_open = false;
@@ -1664,8 +1872,11 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         if model.help_open
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
+            || model.delete_projects_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_sessions_confirm.is_some()
             || model.delete_task_confirm.is_some()
+            || model.delete_tasks_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1685,8 +1896,11 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         if model.help_open
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
+            || model.delete_projects_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_sessions_confirm.is_some()
             || model.delete_task_confirm.is_some()
+            || model.delete_tasks_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1719,8 +1933,11 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         if model.help_open
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
+            || model.delete_projects_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_sessions_confirm.is_some()
             || model.delete_task_confirm.is_some()
+            || model.delete_tasks_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1753,8 +1970,11 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         if model.help_open
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
+            || model.delete_projects_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_sessions_confirm.is_some()
             || model.delete_task_confirm.is_some()
+            || model.delete_tasks_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1777,8 +1997,9 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                     return (model, AppCommand::None);
                 };
 
-                let sessions_view =
+                let mut sessions_view =
                     SessionsView::new(project.project_path.clone(), project.sessions.len());
+                apply_session_filter(&project.sessions, &mut sessions_view, model.engine_filter);
                 model.view = View::NewSession(NewSessionView::new(sessions_view));
             }
             View::Sessions(sessions_view) => {
@@ -1788,32 +2009,53 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                 model.view = View::NewSession(NewSessionView::new(detail_view.from_sessions));
             }
             View::Tasks(tasks_view) => {
-                let Some(sessions_view) =
+                let Some(mut sessions_view) =
                     infer_sessions_view_for_window_menu_view(tasks_view.return_to.as_ref(), &model)
                 else {
                     model.notice = Some("No project selected.".to_string());
                     return (model, AppCommand::None);
                 };
+                if let Some(project) = sessions_view.current_project(&model.data.projects) {
+                    apply_session_filter(
+                        &project.sessions,
+                        &mut sessions_view,
+                        model.engine_filter,
+                    );
+                }
                 model.view = View::NewSession(NewSessionView::new(sessions_view));
             }
             View::TaskCreate(task_create) => {
-                let Some(sessions_view) = infer_sessions_view_for_window_menu_view(
+                let Some(mut sessions_view) = infer_sessions_view_for_window_menu_view(
                     task_create.from_tasks.return_to.as_ref(),
                     &model,
                 ) else {
                     model.notice = Some("No project selected.".to_string());
                     return (model, AppCommand::None);
                 };
+                if let Some(project) = sessions_view.current_project(&model.data.projects) {
+                    apply_session_filter(
+                        &project.sessions,
+                        &mut sessions_view,
+                        model.engine_filter,
+                    );
+                }
                 model.view = View::NewSession(NewSessionView::new(sessions_view));
             }
             View::TaskDetail(task_detail) => {
-                let Some(sessions_view) = infer_sessions_view_for_window_menu_view(
+                let Some(mut sessions_view) = infer_sessions_view_for_window_menu_view(
                     task_detail.from_tasks.return_to.as_ref(),
                     &model,
                 ) else {
                     model.notice = Some("No project selected.".to_string());
                     return (model, AppCommand::None);
                 };
+                if let Some(project) = sessions_view.current_project(&model.data.projects) {
+                    apply_session_filter(
+                        &project.sessions,
+                        &mut sessions_view,
+                        model.engine_filter,
+                    );
+                }
                 model.view = View::NewSession(NewSessionView::new(sessions_view));
             }
             View::NewSession(_) => {}
@@ -1832,8 +2074,11 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         if model.help_open
             || model.system_menu.is_some()
             || model.delete_confirm.is_some()
+            || model.delete_projects_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_sessions_confirm.is_some()
             || model.delete_task_confirm.is_some()
+            || model.delete_tasks_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1874,8 +2119,11 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
 
     if matches!(key.code, KeyCode::F(2)) {
         if model.delete_confirm.is_some()
+            || model.delete_projects_confirm.is_some()
             || model.delete_session_confirm.is_some()
+            || model.delete_sessions_confirm.is_some()
             || model.delete_task_confirm.is_some()
+            || model.delete_tasks_confirm.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1911,12 +2159,24 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         return update_session_result_preview_overlay(model, preview, key);
     }
 
+    if let Some(confirm) = model.delete_sessions_confirm.take() {
+        return update_delete_sessions_confirm(model, confirm, key);
+    }
+
     if let Some(confirm) = model.delete_session_confirm.take() {
         return update_delete_session_confirm(model, confirm, key);
     }
 
+    if let Some(confirm) = model.delete_tasks_confirm.take() {
+        return update_delete_tasks_confirm(model, confirm, key);
+    }
+
     if let Some(confirm) = model.delete_task_confirm.take() {
         return update_delete_task_confirm(model, confirm, key);
+    }
+
+    if let Some(confirm) = model.delete_projects_confirm.take() {
+        return update_delete_projects_confirm(model, confirm, key);
     }
 
     if let Some(confirm) = model.delete_confirm.take() {
@@ -2016,9 +2276,30 @@ fn infer_session_detail_target_view(
                 .get(projects_view.selected)
                 .copied()?;
             let project = model.data.projects.get(project_index)?;
-            let session = project.sessions.first().cloned()?;
-            let from_sessions =
+            let session = match model.engine_filter {
+                EngineFilter::All => project.sessions.first().cloned()?,
+                EngineFilter::Codex | EngineFilter::Claude | EngineFilter::Gemini => project
+                    .sessions
+                    .iter()
+                    .find(|session| session_matches_engine_filter(session, model.engine_filter))
+                    .cloned()?,
+            };
+            let mut from_sessions =
                 SessionsView::new(project.project_path.clone(), project.sessions.len());
+            apply_session_filter(&project.sessions, &mut from_sessions, model.engine_filter);
+            if let Some(selected_index) = project
+                .sessions
+                .iter()
+                .position(|candidate| candidate.log_path == session.log_path)
+            {
+                if let Some(pos) = from_sessions
+                    .filtered_indices
+                    .iter()
+                    .position(|index| *index == selected_index)
+                {
+                    from_sessions.session_selected = pos;
+                }
+            }
             Some((from_sessions, session))
         }
         View::Sessions(sessions_view) => {
@@ -2093,6 +2374,44 @@ fn infer_task_detail_target_view(view: &View) -> Option<(TasksView, TaskId)> {
     }
 }
 
+fn engine_filter_from_engine_menu_index(index: usize) -> Option<EngineFilter> {
+    match index {
+        0 => Some(EngineFilter::All),
+        1 => Some(EngineFilter::Codex),
+        2 => Some(EngineFilter::Claude),
+        3 => Some(EngineFilter::Gemini),
+        _ => None,
+    }
+}
+
+fn apply_engine_filter(mut model: AppModel, filter: EngineFilter) -> AppModel {
+    if model.engine_filter == filter {
+        return model;
+    }
+    model.engine_filter = filter;
+
+    match model.view.clone() {
+        View::Projects(mut view) => {
+            apply_project_filter(&model.data.projects, &mut view, model.engine_filter);
+            clear_project_selection(&mut view);
+            model.view = View::Projects(view);
+        }
+        View::Sessions(mut view) => {
+            if let Some(project) = view.current_project(&model.data.projects) {
+                apply_session_filter(&project.sessions, &mut view, model.engine_filter);
+            } else {
+                view.filtered_indices.clear();
+                view.session_selected = 0;
+            }
+            clear_sessions_selection(&mut view);
+            model.view = View::Sessions(view);
+        }
+        _ => {}
+    }
+
+    model
+}
+
 fn update_system_menu_overlay(
     mut model: AppModel,
     mut menu: SystemMenuOverlay,
@@ -2140,6 +2459,13 @@ fn update_system_menu_overlay(
             };
 
             model.system_menu = None;
+
+            if active == MainMenu::Engine {
+                if let Some(filter) = engine_filter_from_engine_menu_index(menu.item_index) {
+                    model = apply_engine_filter(model, filter);
+                }
+                return (model, AppCommand::None);
+            }
 
             if active == MainMenu::Window {
                 return apply_window_menu_entry(model, entry);
@@ -2437,6 +2763,50 @@ fn update_delete_confirm(
     (model, AppCommand::None)
 }
 
+fn update_delete_projects_confirm(
+    mut model: AppModel,
+    mut confirm: DeleteProjectsConfirmDialog,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Backspace => {
+            model.delete_projects_confirm = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Left | KeyCode::Right => {
+            confirm.selection = confirm.selection.toggle();
+        }
+        KeyCode::Enter => {
+            let command = if confirm.selection == DeleteConfirmSelection::Delete {
+                AppCommand::DeleteProjectLogsBatch {
+                    project_paths: confirm.project_paths.clone(),
+                }
+            } else {
+                AppCommand::None
+            };
+            model.delete_projects_confirm = None;
+            return (model, command);
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            model.delete_projects_confirm = None;
+            return (
+                model,
+                AppCommand::DeleteProjectLogsBatch {
+                    project_paths: confirm.project_paths.clone(),
+                },
+            );
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => {
+            model.delete_projects_confirm = None;
+            return (model, AppCommand::None);
+        }
+        _ => {}
+    }
+
+    model.delete_projects_confirm = Some(confirm);
+    (model, AppCommand::None)
+}
+
 fn update_delete_session_confirm(
     mut model: AppModel,
     mut confirm: DeleteSessionConfirmDialog,
@@ -2478,6 +2848,50 @@ fn update_delete_session_confirm(
     }
 
     model.delete_session_confirm = Some(confirm);
+    (model, AppCommand::None)
+}
+
+fn update_delete_sessions_confirm(
+    mut model: AppModel,
+    mut confirm: DeleteSessionsConfirmDialog,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Backspace => {
+            model.delete_sessions_confirm = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Left | KeyCode::Right => {
+            confirm.selection = confirm.selection.toggle();
+        }
+        KeyCode::Enter => {
+            let command = if confirm.selection == DeleteConfirmSelection::Delete {
+                AppCommand::DeleteSessionLogsBatch {
+                    log_paths: confirm.log_paths.clone(),
+                }
+            } else {
+                AppCommand::None
+            };
+            model.delete_sessions_confirm = None;
+            return (model, command);
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            model.delete_sessions_confirm = None;
+            return (
+                model,
+                AppCommand::DeleteSessionLogsBatch {
+                    log_paths: confirm.log_paths.clone(),
+                },
+            );
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => {
+            model.delete_sessions_confirm = None;
+            return (model, AppCommand::None);
+        }
+        _ => {}
+    }
+
+    model.delete_sessions_confirm = Some(confirm);
     (model, AppCommand::None)
 }
 
@@ -2527,28 +2941,82 @@ fn update_delete_task_confirm(
     (model, AppCommand::None)
 }
 
+fn update_delete_tasks_confirm(
+    mut model: AppModel,
+    mut confirm: DeleteTasksConfirmDialog,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Backspace => {
+            model.delete_tasks_confirm = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Left | KeyCode::Right => {
+            confirm.selection = confirm.selection.toggle();
+        }
+        KeyCode::Enter => {
+            let command = if confirm.selection == DeleteConfirmSelection::Delete {
+                AppCommand::DeleteTasksBatch {
+                    from_tasks: confirm.return_to_tasks.clone(),
+                    task_ids: confirm.task_ids.clone(),
+                }
+            } else {
+                AppCommand::None
+            };
+            model.delete_tasks_confirm = None;
+            return (model, command);
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            model.delete_tasks_confirm = None;
+            return (
+                model,
+                AppCommand::DeleteTasksBatch {
+                    from_tasks: confirm.return_to_tasks.clone(),
+                    task_ids: confirm.task_ids.clone(),
+                },
+            );
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => {
+            model.delete_tasks_confirm = None;
+            return (model, AppCommand::None);
+        }
+        _ => {}
+    }
+
+    model.delete_tasks_confirm = Some(confirm);
+    (model, AppCommand::None)
+}
+
 fn update_error(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
     match key.code {
-        KeyCode::Esc | KeyCode::Backspace => (
-            AppModel {
-                data: model.data.clone(),
-                session_index: model.session_index.clone(),
-                terminal_size: model.terminal_size,
-                notice: None,
-                update_hint: model.update_hint.clone(),
-                help_open: model.help_open,
-                system_menu: model.system_menu.clone(),
-                delete_confirm: model.delete_confirm.clone(),
-                delete_session_confirm: model.delete_session_confirm.clone(),
-                delete_task_confirm: model.delete_task_confirm.clone(),
-                session_result_preview: model.session_result_preview.clone(),
-                session_stats_overlay: model.session_stats_overlay.clone(),
-                project_stats_overlay: model.project_stats_overlay.clone(),
-                processes: model.processes.clone(),
-                view: View::Projects(ProjectsView::new(&model.data.projects)),
-            },
-            AppCommand::None,
-        ),
+        KeyCode::Esc | KeyCode::Backspace => {
+            let mut view = ProjectsView::new(&model.data.projects);
+            apply_project_filter(&model.data.projects, &mut view, model.engine_filter);
+            (
+                AppModel {
+                    data: model.data.clone(),
+                    session_index: model.session_index.clone(),
+                    terminal_size: model.terminal_size,
+                    notice: None,
+                    update_hint: model.update_hint.clone(),
+                    engine_filter: model.engine_filter,
+                    help_open: model.help_open,
+                    system_menu: model.system_menu.clone(),
+                    delete_confirm: model.delete_confirm.clone(),
+                    delete_projects_confirm: model.delete_projects_confirm.clone(),
+                    delete_session_confirm: model.delete_session_confirm.clone(),
+                    delete_sessions_confirm: model.delete_sessions_confirm.clone(),
+                    delete_task_confirm: model.delete_task_confirm.clone(),
+                    delete_tasks_confirm: model.delete_tasks_confirm.clone(),
+                    session_result_preview: model.session_result_preview.clone(),
+                    session_stats_overlay: model.session_stats_overlay.clone(),
+                    project_stats_overlay: model.project_stats_overlay.clone(),
+                    processes: model.processes.clone(),
+                    view: View::Projects(view),
+                },
+                AppCommand::None,
+            )
+        }
         _ => (model, AppCommand::None),
     }
 }
@@ -2558,6 +3026,8 @@ fn update_projects(
     mut view: ProjectsView,
     key: KeyEvent,
 ) -> (AppModel, AppCommand) {
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
     match key.code {
         KeyCode::F(3) => {
             let Some(project_index) = view.filtered_indices.get(view.selected).copied() else {
@@ -2582,32 +3052,37 @@ fn update_projects(
             let Some(project) = model.data.projects.get(project_index) else {
                 return (model, AppCommand::None);
             };
+            let mut sessions_view =
+                SessionsView::new(project.project_path.clone(), project.sessions.len());
+            apply_session_filter(&project.sessions, &mut sessions_view, model.engine_filter);
             let next = AppModel {
                 data: model.data.clone(),
                 session_index: model.session_index.clone(),
                 terminal_size: model.terminal_size,
                 notice: None,
                 update_hint: model.update_hint.clone(),
+                engine_filter: model.engine_filter,
                 help_open: model.help_open,
                 system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
+                delete_projects_confirm: model.delete_projects_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
+                delete_sessions_confirm: model.delete_sessions_confirm.clone(),
                 delete_task_confirm: model.delete_task_confirm.clone(),
+                delete_tasks_confirm: model.delete_tasks_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
                 project_stats_overlay: model.project_stats_overlay.clone(),
                 processes: model.processes.clone(),
-                view: View::Sessions(SessionsView::new(
-                    project.project_path.clone(),
-                    project.sessions.len(),
-                )),
+                view: View::Sessions(sessions_view),
             };
             return (next, AppCommand::None);
         }
         KeyCode::Esc => {
             if !view.query.is_empty() {
                 view.query.clear();
-                apply_project_filter(&model.data.projects, &mut view);
+                apply_project_filter(&model.data.projects, &mut view, model.engine_filter);
+                clear_project_selection(&mut view);
             }
         }
         KeyCode::Char(' ') => {
@@ -2625,29 +3100,60 @@ fn update_projects(
             return (model, AppCommand::OpenSessionResultPreview { session });
         }
         KeyCode::Up => {
-            view.selected = view.selected.saturating_sub(1);
+            if shift {
+                ensure_project_selection_anchor(&model.data.projects, &mut view);
+                view.selected = view.selected.saturating_sub(1);
+                update_project_range_selection(&model.data.projects, &mut view);
+            } else {
+                view.selected = view.selected.saturating_sub(1);
+                clear_project_selection(&mut view);
+            }
         }
         KeyCode::Down => {
             if !view.filtered_indices.is_empty() {
-                view.selected =
-                    (view.selected + 1).min(view.filtered_indices.len().saturating_sub(1));
+                if shift {
+                    ensure_project_selection_anchor(&model.data.projects, &mut view);
+                    view.selected =
+                        (view.selected + 1).min(view.filtered_indices.len().saturating_sub(1));
+                    update_project_range_selection(&model.data.projects, &mut view);
+                } else {
+                    view.selected =
+                        (view.selected + 1).min(view.filtered_indices.len().saturating_sub(1));
+                    clear_project_selection(&mut view);
+                }
             }
         }
         KeyCode::PageUp => {
             let step = page_step_standard_list(model.terminal_size);
-            view.selected = view.selected.saturating_sub(step);
+            if shift {
+                ensure_project_selection_anchor(&model.data.projects, &mut view);
+                view.selected = view.selected.saturating_sub(step);
+                update_project_range_selection(&model.data.projects, &mut view);
+            } else {
+                view.selected = view.selected.saturating_sub(step);
+                clear_project_selection(&mut view);
+            }
         }
         KeyCode::PageDown => {
             if !view.filtered_indices.is_empty() {
                 let step = page_step_standard_list(model.terminal_size);
-                view.selected =
-                    (view.selected + step).min(view.filtered_indices.len().saturating_sub(1));
+                if shift {
+                    ensure_project_selection_anchor(&model.data.projects, &mut view);
+                    view.selected =
+                        (view.selected + step).min(view.filtered_indices.len().saturating_sub(1));
+                    update_project_range_selection(&model.data.projects, &mut view);
+                } else {
+                    view.selected =
+                        (view.selected + step).min(view.filtered_indices.len().saturating_sub(1));
+                    clear_project_selection(&mut view);
+                }
             }
         }
         KeyCode::Backspace => {
             if !view.query.is_empty() {
                 view.query.pop();
-                apply_project_filter(&model.data.projects, &mut view);
+                apply_project_filter(&model.data.projects, &mut view, model.engine_filter);
+                clear_project_selection(&mut view);
             } else {
                 open_delete_confirm(&mut model, &view);
             }
@@ -2658,7 +3164,8 @@ fn update_projects(
         KeyCode::Char(character) => {
             if is_text_input_char(character) {
                 view.query.push(character);
-                apply_project_filter(&model.data.projects, &mut view);
+                apply_project_filter(&model.data.projects, &mut view, model.engine_filter);
+                clear_project_selection(&mut view);
             }
         }
         _ => {}
@@ -2671,11 +3178,15 @@ fn update_projects(
             terminal_size: model.terminal_size,
             notice: None,
             update_hint: model.update_hint.clone(),
+            engine_filter: model.engine_filter,
             help_open: model.help_open,
             system_menu: model.system_menu.clone(),
             delete_confirm: model.delete_confirm.clone(),
+            delete_projects_confirm: model.delete_projects_confirm.clone(),
             delete_session_confirm: model.delete_session_confirm.clone(),
+            delete_sessions_confirm: model.delete_sessions_confirm.clone(),
             delete_task_confirm: model.delete_task_confirm.clone(),
+            delete_tasks_confirm: model.delete_tasks_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
             session_stats_overlay: model.session_stats_overlay.clone(),
             project_stats_overlay: model.project_stats_overlay.clone(),
@@ -2687,6 +3198,44 @@ fn update_projects(
 }
 
 fn open_delete_confirm(model: &mut AppModel, view: &ProjectsView) {
+    if view.selected_project_paths.len() >= 2 {
+        let project_paths = view
+            .selected_project_paths
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut session_count = 0usize;
+        let mut total_size_bytes = 0u64;
+        for project_path in &project_paths {
+            let Some(project) = model
+                .data
+                .projects
+                .iter()
+                .find(|project| &project.project_path == project_path)
+            else {
+                continue;
+            };
+            session_count = session_count.saturating_add(project.sessions.len());
+            total_size_bytes = total_size_bytes.saturating_add(
+                project
+                    .sessions
+                    .iter()
+                    .map(|session| session.file_size_bytes)
+                    .sum::<u64>(),
+            );
+        }
+
+        model.delete_projects_confirm = Some(DeleteProjectsConfirmDialog {
+            project_count: project_paths.len(),
+            project_paths,
+            session_count,
+            total_size_bytes,
+            selection: DeleteConfirmSelection::Cancel,
+        });
+        return;
+    }
+
     let Some(project_index) = view.filtered_indices.get(view.selected).copied() else {
         return;
     };
@@ -2709,15 +3258,62 @@ fn open_delete_confirm(model: &mut AppModel, view: &ProjectsView) {
     });
 }
 
-fn apply_project_filter(projects: &[ProjectSummary], view: &mut ProjectsView) {
+fn infer_engine_from_log_path(log_path: &Path) -> EngineFilter {
+    let has_component = |name: &str| {
+        log_path
+            .components()
+            .any(|c| c.as_os_str() == OsStr::new(name))
+    };
+    if has_component(".claude") {
+        return EngineFilter::Claude;
+    }
+    if has_component(".gemini") {
+        return EngineFilter::Gemini;
+    }
+    EngineFilter::Codex
+}
+
+fn session_matches_engine_filter(session: &SessionSummary, filter: EngineFilter) -> bool {
+    match filter {
+        EngineFilter::All => true,
+        EngineFilter::Codex | EngineFilter::Claude | EngineFilter::Gemini => {
+            infer_engine_from_log_path(&session.log_path) == filter
+        }
+    }
+}
+
+fn project_matches_engine_filter(project: &ProjectSummary, filter: EngineFilter) -> bool {
+    match filter {
+        EngineFilter::All => true,
+        EngineFilter::Codex | EngineFilter::Claude | EngineFilter::Gemini => project
+            .sessions
+            .iter()
+            .any(|session| session_matches_engine_filter(session, filter)),
+    }
+}
+
+fn apply_project_filter(
+    projects: &[ProjectSummary],
+    view: &mut ProjectsView,
+    engine: EngineFilter,
+) {
     let query = view.query.trim().to_lowercase();
     if query.is_empty() {
-        view.filtered_indices = (0..projects.len()).collect();
+        view.filtered_indices = projects
+            .iter()
+            .enumerate()
+            .filter_map(|(index, project)| {
+                project_matches_engine_filter(project, engine).then_some(index)
+            })
+            .collect();
     } else {
         view.filtered_indices = projects
             .iter()
             .enumerate()
             .filter_map(|(index, project)| {
+                if !project_matches_engine_filter(project, engine) {
+                    return None;
+                }
                 let haystack = format!(
                     "{}\n{}",
                     project.name.to_lowercase(),
@@ -2741,15 +3337,43 @@ fn apply_project_filter(projects: &[ProjectSummary], view: &mut ProjectsView) {
     }
 }
 
-fn apply_session_filter(sessions: &[SessionSummary], view: &mut SessionsView) {
+fn prune_project_selection(projects: &[ProjectSummary], view: &mut ProjectsView) {
+    let mut available = BTreeSet::new();
+    for project in projects {
+        available.insert(project.project_path.clone());
+    }
+
+    view.selected_project_paths
+        .retain(|path| available.contains(path));
+    if let Some(anchor) = &view.selection_anchor {
+        if !available.contains(anchor) {
+            view.selection_anchor = None;
+        }
+    }
+}
+
+fn apply_session_filter(
+    sessions: &[SessionSummary],
+    view: &mut SessionsView,
+    engine: EngineFilter,
+) {
     let query = view.query.trim().to_lowercase();
     if query.is_empty() {
-        view.filtered_indices = (0..sessions.len()).collect();
+        view.filtered_indices = sessions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, session)| {
+                session_matches_engine_filter(session, engine).then_some(index)
+            })
+            .collect();
     } else {
         view.filtered_indices = sessions
             .iter()
             .enumerate()
             .filter_map(|(index, session)| {
+                if !session_matches_engine_filter(session, engine) {
+                    return None;
+                }
                 let haystack = format!(
                     "{}\n{}\n{}\n{}",
                     session.title.to_lowercase(),
@@ -2772,6 +3396,21 @@ fn apply_session_filter(sessions: &[SessionSummary], view: &mut SessionsView) {
         view.session_selected = view
             .session_selected
             .min(view.filtered_indices.len().saturating_sub(1));
+    }
+}
+
+fn prune_sessions_selection(sessions: &[SessionSummary], view: &mut SessionsView) {
+    let mut available = BTreeSet::new();
+    for session in sessions {
+        available.insert(session.log_path.clone());
+    }
+
+    view.selected_log_paths
+        .retain(|path| available.contains(path));
+    if let Some(anchor) = &view.selection_anchor {
+        if !available.contains(anchor) {
+            view.selection_anchor = None;
+        }
     }
 }
 
@@ -2808,6 +3447,226 @@ fn apply_task_filter(view: &mut TasksView) {
     }
 }
 
+fn prune_task_selection(view: &mut TasksView) {
+    let mut available = BTreeSet::new();
+    for task in &view.tasks {
+        available.insert(task.id.clone());
+    }
+
+    view.selected_task_ids
+        .retain(|task_id| available.contains(task_id));
+    if let Some(anchor) = &view.selection_anchor {
+        if !available.contains(anchor) {
+            view.selection_anchor = None;
+        }
+    }
+}
+
+fn clear_project_selection(view: &mut ProjectsView) {
+    view.selection_anchor = None;
+    view.selected_project_paths.clear();
+}
+
+fn ensure_project_selection_anchor(projects: &[ProjectSummary], view: &mut ProjectsView) {
+    if view.selection_anchor.is_some() {
+        return;
+    }
+    let Some(anchor) = current_project_path(projects, view) else {
+        return;
+    };
+    view.selection_anchor = Some(anchor);
+}
+
+fn update_project_range_selection(projects: &[ProjectSummary], view: &mut ProjectsView) {
+    if view.filtered_indices.is_empty() {
+        clear_project_selection(view);
+        return;
+    }
+
+    let Some(cursor_path) = current_project_path(projects, view) else {
+        clear_project_selection(view);
+        return;
+    };
+
+    let Some(anchor_path) = view.selection_anchor.clone() else {
+        view.selection_anchor = Some(cursor_path.clone());
+        view.selected_project_paths.clear();
+        view.selected_project_paths.insert(cursor_path);
+        return;
+    };
+
+    let Some(anchor_pos) = view.filtered_indices.iter().position(|index| {
+        projects
+            .get(*index)
+            .is_some_and(|project| project.project_path == anchor_path)
+    }) else {
+        view.selection_anchor = Some(cursor_path.clone());
+        view.selected_project_paths.clear();
+        view.selected_project_paths.insert(cursor_path);
+        return;
+    };
+
+    let cursor_pos = view
+        .selected
+        .min(view.filtered_indices.len().saturating_sub(1));
+    let start = anchor_pos.min(cursor_pos);
+    let end = anchor_pos.max(cursor_pos);
+
+    view.selected_project_paths.clear();
+    for pos in start..=end {
+        let Some(project_index) = view.filtered_indices.get(pos).copied() else {
+            continue;
+        };
+        let Some(project) = projects.get(project_index) else {
+            continue;
+        };
+        view.selected_project_paths
+            .insert(project.project_path.clone());
+    }
+}
+
+fn current_project_path(projects: &[ProjectSummary], view: &ProjectsView) -> Option<PathBuf> {
+    let project_index = view.filtered_indices.get(view.selected).copied()?;
+    let project = projects.get(project_index)?;
+    Some(project.project_path.clone())
+}
+
+fn clear_sessions_selection(view: &mut SessionsView) {
+    view.selection_anchor = None;
+    view.selected_log_paths.clear();
+}
+
+fn ensure_sessions_selection_anchor(sessions: &[SessionSummary], view: &mut SessionsView) {
+    if view.selection_anchor.is_some() {
+        return;
+    }
+    let Some(anchor) = current_session_log_path(sessions, view) else {
+        return;
+    };
+    view.selection_anchor = Some(anchor);
+}
+
+fn update_sessions_range_selection(sessions: &[SessionSummary], view: &mut SessionsView) {
+    if view.filtered_indices.is_empty() {
+        clear_sessions_selection(view);
+        return;
+    }
+
+    let Some(cursor_path) = current_session_log_path(sessions, view) else {
+        clear_sessions_selection(view);
+        return;
+    };
+
+    let Some(anchor_path) = view.selection_anchor.clone() else {
+        view.selection_anchor = Some(cursor_path.clone());
+        view.selected_log_paths.clear();
+        view.selected_log_paths.insert(cursor_path);
+        return;
+    };
+
+    let Some(anchor_pos) = view.filtered_indices.iter().position(|index| {
+        sessions
+            .get(*index)
+            .is_some_and(|session| session.log_path == anchor_path)
+    }) else {
+        view.selection_anchor = Some(cursor_path.clone());
+        view.selected_log_paths.clear();
+        view.selected_log_paths.insert(cursor_path);
+        return;
+    };
+
+    let cursor_pos = view
+        .session_selected
+        .min(view.filtered_indices.len().saturating_sub(1));
+    let start = anchor_pos.min(cursor_pos);
+    let end = anchor_pos.max(cursor_pos);
+
+    view.selected_log_paths.clear();
+    for pos in start..=end {
+        let Some(session_index) = view.filtered_indices.get(pos).copied() else {
+            continue;
+        };
+        let Some(session) = sessions.get(session_index) else {
+            continue;
+        };
+        view.selected_log_paths.insert(session.log_path.clone());
+    }
+}
+
+fn current_session_log_path(sessions: &[SessionSummary], view: &SessionsView) -> Option<PathBuf> {
+    let session_index = view.filtered_indices.get(view.session_selected).copied()?;
+    let session = sessions.get(session_index)?;
+    Some(session.log_path.clone())
+}
+
+fn clear_tasks_selection(view: &mut TasksView) {
+    view.selection_anchor = None;
+    view.selected_task_ids.clear();
+}
+
+fn ensure_tasks_selection_anchor(view: &mut TasksView) {
+    if view.selection_anchor.is_some() {
+        return;
+    }
+    let Some(anchor) = current_task_id(view) else {
+        return;
+    };
+    view.selection_anchor = Some(anchor);
+}
+
+fn update_tasks_range_selection(view: &mut TasksView) {
+    if view.filtered_indices.is_empty() {
+        clear_tasks_selection(view);
+        return;
+    }
+
+    let Some(cursor_id) = current_task_id(view) else {
+        clear_tasks_selection(view);
+        return;
+    };
+
+    let Some(anchor_id) = view.selection_anchor.clone() else {
+        view.selection_anchor = Some(cursor_id.clone());
+        view.selected_task_ids.clear();
+        view.selected_task_ids.insert(cursor_id);
+        return;
+    };
+
+    let Some(anchor_pos) = view.filtered_indices.iter().position(|index| {
+        view.tasks
+            .get(*index)
+            .is_some_and(|task| task.id == anchor_id)
+    }) else {
+        view.selection_anchor = Some(cursor_id.clone());
+        view.selected_task_ids.clear();
+        view.selected_task_ids.insert(cursor_id);
+        return;
+    };
+
+    let cursor_pos = view
+        .selected
+        .min(view.filtered_indices.len().saturating_sub(1));
+    let start = anchor_pos.min(cursor_pos);
+    let end = anchor_pos.max(cursor_pos);
+
+    view.selected_task_ids.clear();
+    for pos in start..=end {
+        let Some(task_index) = view.filtered_indices.get(pos).copied() else {
+            continue;
+        };
+        let Some(task) = view.tasks.get(task_index) else {
+            continue;
+        };
+        view.selected_task_ids.insert(task.id.clone());
+    }
+}
+
+fn current_task_id(view: &TasksView) -> Option<TaskId> {
+    let task_index = view.filtered_indices.get(view.selected).copied()?;
+    let task = view.tasks.get(task_index)?;
+    Some(task.id.clone())
+}
+
 fn selected_task_id(view: &TasksView) -> Option<TaskId> {
     let index = view.filtered_indices.get(view.selected).copied()?;
     let task = view.tasks.get(index)?;
@@ -2815,6 +3674,17 @@ fn selected_task_id(view: &TasksView) -> Option<TaskId> {
 }
 
 fn open_delete_task_confirm_from_tasks(model: &mut AppModel, view: &TasksView) -> bool {
+    if view.selected_task_ids.len() >= 2 {
+        let task_ids = view.selected_task_ids.iter().cloned().collect::<Vec<_>>();
+        model.delete_tasks_confirm = Some(DeleteTasksConfirmDialog {
+            task_count: task_ids.len(),
+            task_ids,
+            selection: DeleteConfirmSelection::Cancel,
+            return_to_tasks: view.clone(),
+        });
+        return true;
+    }
+
     let Some(task_index) = view.filtered_indices.get(view.selected).copied() else {
         return false;
     };
@@ -2893,6 +3763,27 @@ fn open_delete_session_confirm(model: &mut AppModel, view: &SessionsView) -> boo
     let Some(project) = view.current_project(&model.data.projects) else {
         return false;
     };
+
+    if view.selected_log_paths.len() >= 2 {
+        let log_paths = view.selected_log_paths.iter().cloned().collect::<Vec<_>>();
+        let mut total_size_bytes = 0u64;
+        for session in &project.sessions {
+            if view.selected_log_paths.contains(&session.log_path) {
+                total_size_bytes = total_size_bytes.saturating_add(session.file_size_bytes);
+            }
+        }
+
+        model.delete_sessions_confirm = Some(DeleteSessionsConfirmDialog {
+            project_name: project.name.clone(),
+            project_path: project.project_path.clone(),
+            session_count: log_paths.len(),
+            log_paths,
+            total_size_bytes,
+            selection: DeleteConfirmSelection::Cancel,
+        });
+        return true;
+    }
+
     let Some(selected_index) = view.filtered_indices.get(view.session_selected).copied() else {
         return false;
     };
@@ -2921,6 +3812,7 @@ fn update_sessions(
     let new_modifier = key.modifiers.contains(KeyModifiers::CONTROL)
         || key.modifiers.contains(KeyModifiers::SUPER)
         || key.modifiers.contains(KeyModifiers::META);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
     match key.code {
         KeyCode::F(3) => {
@@ -2961,85 +3853,153 @@ fn update_sessions(
             if !view.query.is_empty() {
                 view.query.clear();
                 if let Some(project) = view.current_project(&model.data.projects) {
-                    apply_session_filter(&project.sessions, &mut view);
+                    apply_session_filter(&project.sessions, &mut view, model.engine_filter);
                 } else {
                     view.filtered_indices.clear();
                     view.session_selected = 0;
                 }
+                clear_sessions_selection(&mut view);
                 model.view = View::Sessions(view);
                 return (model, AppCommand::None);
             }
 
+            let mut projects_view = ProjectsView::new(&model.data.projects);
+            apply_project_filter(
+                &model.data.projects,
+                &mut projects_view,
+                model.engine_filter,
+            );
             let next = AppModel {
                 data: model.data.clone(),
                 session_index: model.session_index.clone(),
                 terminal_size: model.terminal_size,
                 notice: None,
                 update_hint: model.update_hint.clone(),
+                engine_filter: model.engine_filter,
                 help_open: model.help_open,
                 system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
+                delete_projects_confirm: model.delete_projects_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
+                delete_sessions_confirm: model.delete_sessions_confirm.clone(),
                 delete_task_confirm: model.delete_task_confirm.clone(),
+                delete_tasks_confirm: model.delete_tasks_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
                 project_stats_overlay: model.project_stats_overlay.clone(),
                 processes: model.processes.clone(),
-                view: View::Projects(ProjectsView::new(&model.data.projects)),
+                view: View::Projects(projects_view),
             };
             return (next, AppCommand::None);
         }
         KeyCode::Up => {
-            view.session_selected = view.session_selected.saturating_sub(1);
+            if shift {
+                if let Some(project) = view.current_project(&model.data.projects) {
+                    ensure_sessions_selection_anchor(&project.sessions, &mut view);
+                    view.session_selected = view.session_selected.saturating_sub(1);
+                    update_sessions_range_selection(&project.sessions, &mut view);
+                } else {
+                    clear_sessions_selection(&mut view);
+                }
+            } else {
+                view.session_selected = view.session_selected.saturating_sub(1);
+                clear_sessions_selection(&mut view);
+            }
         }
         KeyCode::Down => {
             if !view.filtered_indices.is_empty() {
-                view.session_selected =
-                    (view.session_selected + 1).min(view.filtered_indices.len().saturating_sub(1));
+                if shift {
+                    if let Some(project) = view.current_project(&model.data.projects) {
+                        ensure_sessions_selection_anchor(&project.sessions, &mut view);
+                        view.session_selected = (view.session_selected + 1)
+                            .min(view.filtered_indices.len().saturating_sub(1));
+                        update_sessions_range_selection(&project.sessions, &mut view);
+                    } else {
+                        clear_sessions_selection(&mut view);
+                    }
+                } else {
+                    view.session_selected = (view.session_selected + 1)
+                        .min(view.filtered_indices.len().saturating_sub(1));
+                    clear_sessions_selection(&mut view);
+                }
             }
         }
         KeyCode::PageUp => {
             let step = page_step_standard_list(model.terminal_size);
-            view.session_selected = view.session_selected.saturating_sub(step);
+            if shift {
+                if let Some(project) = view.current_project(&model.data.projects) {
+                    ensure_sessions_selection_anchor(&project.sessions, &mut view);
+                    view.session_selected = view.session_selected.saturating_sub(step);
+                    update_sessions_range_selection(&project.sessions, &mut view);
+                } else {
+                    clear_sessions_selection(&mut view);
+                }
+            } else {
+                view.session_selected = view.session_selected.saturating_sub(step);
+                clear_sessions_selection(&mut view);
+            }
         }
         KeyCode::PageDown => {
             if !view.filtered_indices.is_empty() {
                 let step = page_step_standard_list(model.terminal_size);
-                view.session_selected = (view.session_selected + step)
-                    .min(view.filtered_indices.len().saturating_sub(1));
+                if shift {
+                    if let Some(project) = view.current_project(&model.data.projects) {
+                        ensure_sessions_selection_anchor(&project.sessions, &mut view);
+                        view.session_selected = (view.session_selected + step)
+                            .min(view.filtered_indices.len().saturating_sub(1));
+                        update_sessions_range_selection(&project.sessions, &mut view);
+                    } else {
+                        clear_sessions_selection(&mut view);
+                    }
+                } else {
+                    view.session_selected = (view.session_selected + step)
+                        .min(view.filtered_indices.len().saturating_sub(1));
+                    clear_sessions_selection(&mut view);
+                }
             }
         }
         KeyCode::Backspace => {
             if !view.query.is_empty() {
                 view.query.pop();
                 if let Some(project) = view.current_project(&model.data.projects) {
-                    apply_session_filter(&project.sessions, &mut view);
+                    apply_session_filter(&project.sessions, &mut view, model.engine_filter);
                 } else {
                     view.filtered_indices.clear();
                     view.session_selected = 0;
                 }
+                clear_sessions_selection(&mut view);
                 model.view = View::Sessions(view);
                 return (model, AppCommand::None);
             }
 
             let opened = open_delete_session_confirm(&mut model, &view);
             if !opened {
+                let mut projects_view = ProjectsView::new(&model.data.projects);
+                apply_project_filter(
+                    &model.data.projects,
+                    &mut projects_view,
+                    model.engine_filter,
+                );
                 let next = AppModel {
                     data: model.data.clone(),
                     session_index: model.session_index.clone(),
                     terminal_size: model.terminal_size,
                     notice: None,
                     update_hint: model.update_hint.clone(),
+                    engine_filter: model.engine_filter,
                     help_open: model.help_open,
                     system_menu: model.system_menu.clone(),
                     delete_confirm: model.delete_confirm.clone(),
+                    delete_projects_confirm: model.delete_projects_confirm.clone(),
                     delete_session_confirm: model.delete_session_confirm.clone(),
+                    delete_sessions_confirm: model.delete_sessions_confirm.clone(),
                     delete_task_confirm: model.delete_task_confirm.clone(),
+                    delete_tasks_confirm: model.delete_tasks_confirm.clone(),
                     session_result_preview: model.session_result_preview.clone(),
                     session_stats_overlay: model.session_stats_overlay.clone(),
                     project_stats_overlay: model.project_stats_overlay.clone(),
                     processes: model.processes.clone(),
-                    view: View::Projects(ProjectsView::new(&model.data.projects)),
+                    view: View::Projects(projects_view),
                 };
                 return (next, AppCommand::None);
             }
@@ -3054,11 +4014,15 @@ fn update_sessions(
                 terminal_size: model.terminal_size,
                 notice: None,
                 update_hint: model.update_hint.clone(),
+                engine_filter: model.engine_filter,
                 help_open: model.help_open,
                 system_menu: model.system_menu.clone(),
                 delete_confirm: model.delete_confirm.clone(),
+                delete_projects_confirm: model.delete_projects_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
+                delete_sessions_confirm: model.delete_sessions_confirm.clone(),
                 delete_task_confirm: model.delete_task_confirm.clone(),
+                delete_tasks_confirm: model.delete_tasks_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
                 project_stats_overlay: model.project_stats_overlay.clone(),
@@ -3084,11 +4048,12 @@ fn update_sessions(
             if is_text_input_char(character) {
                 view.query.push(character);
                 if let Some(project) = view.current_project(&model.data.projects) {
-                    apply_session_filter(&project.sessions, &mut view);
+                    apply_session_filter(&project.sessions, &mut view, model.engine_filter);
                 } else {
                     view.filtered_indices.clear();
                     view.session_selected = 0;
                 }
+                clear_sessions_selection(&mut view);
             }
         }
         _ => {}
@@ -3101,11 +4066,15 @@ fn update_sessions(
             terminal_size: model.terminal_size,
             notice: None,
             update_hint: model.update_hint.clone(),
+            engine_filter: model.engine_filter,
             help_open: model.help_open,
             system_menu: model.system_menu.clone(),
             delete_confirm: model.delete_confirm.clone(),
+            delete_projects_confirm: model.delete_projects_confirm.clone(),
             delete_session_confirm: model.delete_session_confirm.clone(),
+            delete_sessions_confirm: model.delete_sessions_confirm.clone(),
             delete_task_confirm: model.delete_task_confirm.clone(),
+            delete_tasks_confirm: model.delete_tasks_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
             session_stats_overlay: model.session_stats_overlay.clone(),
             project_stats_overlay: model.project_stats_overlay.clone(),
@@ -3587,6 +4556,7 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
     let send_modifier = key.modifiers.contains(KeyModifiers::CONTROL)
         || key.modifiers.contains(KeyModifiers::SUPER)
         || key.modifiers.contains(KeyModifiers::META);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
     match key.code {
         KeyCode::F(3) => {
@@ -3619,6 +4589,7 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
             if !view.query.is_empty() {
                 view.query.clear();
                 apply_task_filter(&mut view);
+                clear_tasks_selection(&mut view);
                 model.view = View::Tasks(view);
                 return (model, AppCommand::None);
             }
@@ -3630,6 +4601,7 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
             if !view.query.is_empty() {
                 view.query.pop();
                 apply_task_filter(&mut view);
+                clear_tasks_selection(&mut view);
                 model.view = View::Tasks(view);
                 return (model, AppCommand::None);
             }
@@ -3638,23 +4610,53 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
             return (model, AppCommand::None);
         }
         KeyCode::Up => {
-            view.selected = view.selected.saturating_sub(1);
+            if shift {
+                ensure_tasks_selection_anchor(&mut view);
+                view.selected = view.selected.saturating_sub(1);
+                update_tasks_range_selection(&mut view);
+            } else {
+                view.selected = view.selected.saturating_sub(1);
+                clear_tasks_selection(&mut view);
+            }
         }
         KeyCode::Down => {
             if !view.filtered_indices.is_empty() {
-                view.selected =
-                    (view.selected + 1).min(view.filtered_indices.len().saturating_sub(1));
+                if shift {
+                    ensure_tasks_selection_anchor(&mut view);
+                    view.selected =
+                        (view.selected + 1).min(view.filtered_indices.len().saturating_sub(1));
+                    update_tasks_range_selection(&mut view);
+                } else {
+                    view.selected =
+                        (view.selected + 1).min(view.filtered_indices.len().saturating_sub(1));
+                    clear_tasks_selection(&mut view);
+                }
             }
         }
         KeyCode::PageUp => {
             let step = page_step_standard_list(model.terminal_size);
-            view.selected = view.selected.saturating_sub(step);
+            if shift {
+                ensure_tasks_selection_anchor(&mut view);
+                view.selected = view.selected.saturating_sub(step);
+                update_tasks_range_selection(&mut view);
+            } else {
+                view.selected = view.selected.saturating_sub(step);
+                clear_tasks_selection(&mut view);
+            }
         }
         KeyCode::PageDown => {
             if !view.filtered_indices.is_empty() {
                 let step = page_step_standard_list(model.terminal_size);
-                view.selected =
-                    (view.selected + step).min(view.filtered_indices.len().saturating_sub(1));
+                if shift {
+                    ensure_tasks_selection_anchor(&mut view);
+                    view.selected =
+                        (view.selected + step).min(view.filtered_indices.len().saturating_sub(1));
+                    update_tasks_range_selection(&mut view);
+                } else {
+                    view.selected =
+                        (view.selected + step).min(view.filtered_indices.len().saturating_sub(1));
+                    clear_tasks_selection(&mut view);
+                }
             }
         }
         KeyCode::BackTab => {
@@ -3698,6 +4700,7 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
             if is_text_input_char(character) {
                 view.query.push(character);
                 apply_task_filter(&mut view);
+                clear_tasks_selection(&mut view);
             }
         }
         _ => {}
@@ -3725,14 +4728,18 @@ fn update_task_create(
                         model.view = View::TaskCreate(view);
                         return (model, AppCommand::None);
                     }
+                    KeyCode::Char('v') | KeyCode::Char('V') if command_modifier => {
+                        view.overlay = None;
+                        model.view = View::TaskCreate(view);
+                        return (model, AppCommand::TaskCreatePasteImageFromClipboard);
+                    }
                     KeyCode::Backspace => editor.backspace(),
                     KeyCode::Enter => {
                         let path = editor.text.trim().to_string();
                         if path.is_empty() {
-                            model.notice = Some("Image path is empty.".to_string());
-                            view.overlay = Some(TaskCreateOverlay::ImagePath(editor));
+                            view.overlay = None;
                             model.view = View::TaskCreate(view);
-                            return (model, AppCommand::None);
+                            return (model, AppCommand::TaskCreatePasteImageFromClipboard);
                         }
                         view.overlay = Some(TaskCreateOverlay::ImagePath(editor));
                         model.view = View::TaskCreate(view);
@@ -3796,6 +4803,10 @@ fn update_task_create(
         KeyCode::Esc => {
             model.view = View::Tasks(view.from_tasks.clone());
             return (model, AppCommand::None);
+        }
+        KeyCode::Char('v') | KeyCode::Char('V') if command_modifier => {
+            model.view = View::TaskCreate(view);
+            return (model, AppCommand::TaskCreatePasteImageFromClipboard);
         }
         KeyCode::Char('s') | KeyCode::Char('S') if command_modifier => {
             let body = view.editor.text();
@@ -3946,6 +4957,235 @@ fn update_task_detail(
 
     model.view = View::TaskDetail(view);
     (model, AppCommand::None)
+}
+
+#[cfg(test)]
+mod task_create_clipboard_tests {
+    use super::*;
+
+    fn dummy_project() -> ProjectSummary {
+        ProjectSummary {
+            name: "proj".to_string(),
+            project_path: PathBuf::from("/tmp/proj"),
+            sessions: Vec::new(),
+            last_modified: None,
+        }
+    }
+
+    fn task_create_model() -> AppModel {
+        let data = AppData::from_scan(
+            PathBuf::from("/tmp/sessions"),
+            vec![dummy_project()],
+            ScanWarningCount::from(0usize),
+        );
+        let mut model = AppModel::new(data);
+        let return_to = Box::new(model.view.clone());
+        let tasks_view = TasksView::new(return_to, Vec::new());
+        model.view = View::TaskCreate(TaskCreateView::new(tasks_view, PathBuf::from("/tmp/proj")));
+        model
+    }
+
+    #[test]
+    fn ctrl_v_pastes_image_from_clipboard_in_task_create() {
+        let model = task_create_model();
+        let key = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
+        let (_next, cmd) = update(model, AppEvent::Key(key));
+        assert!(matches!(cmd, AppCommand::TaskCreatePasteImageFromClipboard));
+    }
+
+    #[test]
+    fn enter_on_empty_image_path_uses_clipboard() {
+        let mut model = task_create_model();
+        let View::TaskCreate(mut view) = model.view.clone() else {
+            panic!("expected TaskCreate view");
+        };
+        view.overlay = Some(TaskCreateOverlay::ImagePath(LineEditor::new()));
+        model.view = View::TaskCreate(view);
+
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let (next, cmd) = update(model, AppEvent::Key(key));
+        assert!(matches!(cmd, AppCommand::TaskCreatePasteImageFromClipboard));
+        let View::TaskCreate(next_view) = next.view else {
+            panic!("expected TaskCreate view");
+        };
+        assert!(next_view.overlay.is_none());
+    }
+}
+
+#[cfg(test)]
+mod multi_select_tests {
+    use super::*;
+
+    fn make_session(project_path: &str, id: &str, log_file: &str) -> SessionSummary {
+        SessionSummary {
+            meta: crate::domain::SessionMeta {
+                id: id.to_string(),
+                cwd: PathBuf::from(project_path),
+                started_at_rfc3339: "2026-02-01T00:00:00Z".to_string(),
+            },
+            log_path: PathBuf::from(log_file),
+            title: format!("session {id}"),
+            file_size_bytes: 123,
+            file_modified: None,
+        }
+    }
+
+    fn projects_model() -> AppModel {
+        let p1 = ProjectSummary {
+            name: "p1".to_string(),
+            project_path: PathBuf::from("/tmp/p1"),
+            sessions: vec![make_session("/tmp/p1", "s1", "/tmp/sessions/p1-s1.jsonl")],
+            last_modified: None,
+        };
+        let p2 = ProjectSummary {
+            name: "p2".to_string(),
+            project_path: PathBuf::from("/tmp/p2"),
+            sessions: vec![make_session("/tmp/p2", "s2", "/tmp/sessions/p2-s2.jsonl")],
+            last_modified: None,
+        };
+        let p3 = ProjectSummary {
+            name: "p3".to_string(),
+            project_path: PathBuf::from("/tmp/p3"),
+            sessions: vec![make_session("/tmp/p3", "s3", "/tmp/sessions/p3-s3.jsonl")],
+            last_modified: None,
+        };
+
+        let data = AppData::from_scan(
+            PathBuf::from("/tmp/sessions"),
+            vec![p1, p2, p3],
+            ScanWarningCount::from(0usize),
+        );
+        AppModel::new(data)
+    }
+
+    #[test]
+    fn shift_down_selects_range_in_projects() {
+        let model = projects_model();
+
+        let key = KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT);
+        let (next, cmd) = update(model, AppEvent::Key(key));
+        assert!(matches!(cmd, AppCommand::None));
+
+        let View::Projects(view) = next.view else {
+            panic!("expected Projects view");
+        };
+        assert_eq!(view.selected, 1);
+        assert_eq!(view.selected_project_paths.len(), 2);
+        assert!(
+            view.selected_project_paths
+                .contains(&PathBuf::from("/tmp/p1"))
+        );
+        assert!(
+            view.selected_project_paths
+                .contains(&PathBuf::from("/tmp/p2"))
+        );
+    }
+
+    #[test]
+    fn delete_opens_batch_confirm_for_selected_projects() {
+        let model = projects_model();
+        let key = KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT);
+        let (model, _cmd) = update(model, AppEvent::Key(key));
+
+        let key = KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE);
+        let (next, cmd) = update(model, AppEvent::Key(key));
+        assert!(matches!(cmd, AppCommand::None));
+        assert!(next.delete_projects_confirm.is_some());
+
+        let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        let (_next, cmd) = update(next, AppEvent::Key(key));
+        match cmd {
+            AppCommand::DeleteProjectLogsBatch { project_paths } => {
+                assert_eq!(project_paths.len(), 2);
+            }
+            _ => panic!("expected DeleteProjectLogsBatch"),
+        }
+    }
+
+    #[test]
+    fn delete_opens_batch_confirm_for_selected_sessions() {
+        let mut model = projects_model();
+        let project = model.data.projects.first().expect("project");
+        model.view = View::Sessions(SessionsView::new(
+            project.project_path.clone(),
+            project.sessions.len(),
+        ));
+
+        // Seed a sessions view with at least two sessions.
+        if let View::Sessions(view) = &mut model.view {
+            view.filtered_indices = vec![0, 0];
+        }
+
+        // Better: build a project with 2 sessions.
+        let p = ProjectSummary {
+            name: "p".to_string(),
+            project_path: PathBuf::from("/tmp/p"),
+            sessions: vec![
+                make_session("/tmp/p", "a", "/tmp/sessions/p-a.jsonl"),
+                make_session("/tmp/p", "b", "/tmp/sessions/p-b.jsonl"),
+            ],
+            last_modified: None,
+        };
+        model.data.projects = vec![p.clone()];
+        model.view = View::Sessions(SessionsView::new(p.project_path.clone(), p.sessions.len()));
+
+        let key = KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT);
+        let (model, _cmd) = update(model, AppEvent::Key(key));
+
+        let key = KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE);
+        let (next, cmd) = update(model, AppEvent::Key(key));
+        assert!(matches!(cmd, AppCommand::None));
+        assert!(next.delete_sessions_confirm.is_some());
+
+        let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        let (_next, cmd) = update(next, AppEvent::Key(key));
+        match cmd {
+            AppCommand::DeleteSessionLogsBatch { log_paths } => {
+                assert_eq!(log_paths.len(), 2);
+            }
+            _ => panic!("expected DeleteSessionLogsBatch"),
+        }
+    }
+
+    #[test]
+    fn delete_opens_batch_confirm_for_selected_tasks() {
+        let mut model = projects_model();
+        let return_to = Box::new(model.view.clone());
+        let tasks = vec![
+            TaskSummaryRow {
+                id: TaskId::new("t1".to_string()),
+                title: "one".to_string(),
+                project_path: PathBuf::from("/tmp/p1"),
+                updated_at: SystemTime::UNIX_EPOCH,
+                image_count: 0,
+            },
+            TaskSummaryRow {
+                id: TaskId::new("t2".to_string()),
+                title: "two".to_string(),
+                project_path: PathBuf::from("/tmp/p1"),
+                updated_at: SystemTime::UNIX_EPOCH,
+                image_count: 0,
+            },
+        ];
+        model.view = View::Tasks(TasksView::new(return_to, tasks));
+
+        let key = KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT);
+        let (model, _cmd) = update(model, AppEvent::Key(key));
+
+        let key = KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE);
+        let (next, cmd) = update(model, AppEvent::Key(key));
+        assert!(matches!(cmd, AppCommand::None));
+        assert!(next.delete_tasks_confirm.is_some());
+
+        let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        let (_next, cmd) = update(next, AppEvent::Key(key));
+        match cmd {
+            AppCommand::DeleteTasksBatch { task_ids, .. } => {
+                assert_eq!(task_ids.len(), 2);
+            }
+            _ => panic!("expected DeleteTasksBatch"),
+        }
+    }
 }
 
 fn is_text_input_char(character: char) -> bool {

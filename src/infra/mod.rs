@@ -1,3 +1,4 @@
+mod clipboard;
 mod codex_fork;
 mod delete;
 mod processes;
@@ -8,6 +9,7 @@ mod tasks;
 mod update;
 mod watch;
 
+pub use clipboard::*;
 pub use codex_fork::*;
 pub use delete::*;
 pub use processes::*;

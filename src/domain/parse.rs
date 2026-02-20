@@ -96,6 +96,7 @@ pub fn is_metadata_prompt(text: &str) -> bool {
         || trimmed.starts_with("<environment_context>")
         || trimmed.starts_with("<INSTRUCTIONS>")
         || (trimmed.starts_with("<skill>") && trimmed.contains("</skill>"))
+        || (trimmed.starts_with("<turn_aborted>") && trimmed.contains("</turn_aborted>"))
 }
 
 pub fn derive_title_from_user_text(text: &str) -> Option<String> {
@@ -189,6 +190,9 @@ mod tests {
             "<environment_context>\n  <cwd>/x</cwd>\n</environment_context>"
         ));
         assert!(is_metadata_prompt("<INSTRUCTIONS>\nfoo\n</INSTRUCTIONS>"));
+        assert!(is_metadata_prompt(
+            "<turn_aborted>\nThe user interrupted.\n</turn_aborted>"
+        ));
         assert!(!is_metadata_prompt("do the thing"));
     }
 }

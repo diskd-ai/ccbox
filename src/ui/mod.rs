@@ -1,9 +1,10 @@
-use crate::app::{AppModel, DeleteConfirmSelection, SessionDetailFocus, View};
+use crate::app::{AppModel, DeleteConfirmSelection, EngineFilter, SessionDetailFocus, View};
 use crate::domain::{TimelineItem, TimelineItemKind, TurnContextSummary};
 use humansize::{DECIMAL, format_size};
 use ratatui::prelude::*;
 use ratatui::widgets::block::{BorderType, Title};
 use ratatui::widgets::*;
+mod theme;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -37,6 +38,11 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
     if full_area.width == 0 || full_area.height == 0 {
         return;
     }
+
+    frame.render_widget(
+        Block::default().style(Style::default().bg(theme::BG).fg(theme::FG)),
+        full_area,
+    );
 
     render_menu_bar(frame, full_area, model);
 
@@ -80,16 +86,32 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
         render_main_menu_overlay(frame, content_area, model, menu);
     }
 
+    if should_dim_background_for_modal(model) {
+        dim_area(frame, full_area);
+    }
+
     if model.help_open {
         render_help_overlay(frame, content_area);
+    }
+
+    if let Some(confirm) = &model.delete_projects_confirm {
+        render_delete_projects_confirm_overlay(frame, content_area, model, confirm);
     }
 
     if let Some(confirm) = &model.delete_confirm {
         render_delete_confirm_overlay(frame, content_area, model, confirm);
     }
 
+    if let Some(confirm) = &model.delete_sessions_confirm {
+        render_delete_sessions_confirm_overlay(frame, content_area, model, confirm);
+    }
+
     if let Some(confirm) = &model.delete_session_confirm {
         render_delete_session_confirm_overlay(frame, content_area, model, confirm);
+    }
+
+    if let Some(confirm) = &model.delete_tasks_confirm {
+        render_delete_tasks_confirm_overlay(frame, content_area, model, confirm);
     }
 
     if let Some(confirm) = &model.delete_task_confirm {
@@ -109,6 +131,113 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
     }
 }
 
+fn should_dim_background_for_modal(model: &AppModel) -> bool {
+    model.help_open
+        || model.delete_confirm.is_some()
+        || model.delete_projects_confirm.is_some()
+        || model.delete_session_confirm.is_some()
+        || model.delete_sessions_confirm.is_some()
+        || model.delete_task_confirm.is_some()
+        || model.delete_tasks_confirm.is_some()
+        || model.session_result_preview.is_some()
+        || model.session_stats_overlay.is_some()
+        || model.project_stats_overlay.is_some()
+}
+
+fn dim_area(frame: &mut Frame, area: Rect) {
+    let buf = frame.buffer_mut();
+    let area = buf.area.intersection(area);
+    if area.is_empty() {
+        return;
+    }
+    let dim_style = Style::default().add_modifier(Modifier::DIM);
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            buf[(x, y)].set_style(dim_style);
+        }
+    }
+}
+
+pub fn clamp_scroll_state(model: &mut AppModel) {
+    let (width, height) = model.terminal_size;
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let full_area = Rect {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    };
+    let content_area = if full_area.height > 1 {
+        Rect {
+            x: full_area.x,
+            y: full_area.y.saturating_add(1),
+            width: full_area.width,
+            height: full_area.height.saturating_sub(1),
+        }
+    } else {
+        full_area
+    };
+
+    if let View::SessionDetail(detail_view) = &mut model.view {
+        clamp_session_detail_details_scroll(content_area, detail_view);
+    }
+}
+
+fn clamp_session_detail_details_scroll(
+    area: Rect,
+    detail_view: &mut crate::app::SessionDetailView,
+) {
+    if detail_view.details_scroll == 0 {
+        return;
+    }
+
+    let area = inner_area(area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let body = chunks[1];
+    let panels = if body.width >= 90 {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(body)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(body)
+    };
+    let detail_area = panels[1];
+
+    let detail_block = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1));
+    let detail_inner = detail_block.inner(detail_area);
+    if detail_inner.width == 0 || detail_inner.height == 0 {
+        detail_view.details_scroll = 0;
+        return;
+    }
+
+    let detail_text = build_item_detail_text(detail_view);
+    let detail_total = Paragraph::new(detail_text)
+        .wrap(Wrap { trim: false })
+        .line_count(detail_inner.width);
+
+    let detail_viewport = detail_inner.height as usize;
+    let max_scroll = detail_total.saturating_sub(detail_viewport);
+    let max_scroll_u16 = u16::try_from(max_scroll).unwrap_or(u16::MAX);
+    detail_view.details_scroll = detail_view.details_scroll.min(max_scroll_u16);
+}
+
 fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
     let bar_area = Rect {
         x: area.x,
@@ -117,21 +246,21 @@ fn render_menu_bar(frame: &mut Frame, area: Rect, model: &AppModel) {
         height: 1,
     };
 
-    let bg = Color::DarkGray;
-    let base_style = Style::default().fg(Color::White).bg(bg);
-    let hint_label_style = Style::default().fg(Color::Gray).bg(bg);
+    let bg = theme::BAR_BG;
+    let base_style = Style::default().fg(theme::FG).bg(bg);
+    let hint_label_style = Style::default().fg(theme::DIM).bg(bg);
     let hint_key_style = Style::default()
-        .fg(Color::LightBlue)
+        .fg(theme::ACCENT)
         .bg(bg)
         .add_modifier(Modifier::BOLD);
     let menu_open_index = model.system_menu.as_ref().map(|menu| menu.menu_index);
     let menus = crate::app::main_menus_for_view(&model.view);
     let active_style = Style::default()
-        .fg(Color::Black)
-        .bg(Color::White)
+        .fg(theme::BG)
+        .bg(theme::ACCENT)
         .add_modifier(Modifier::BOLD);
     let inactive_style = Style::default()
-        .fg(Color::White)
+        .fg(theme::FG)
         .bg(bg)
         .add_modifier(Modifier::BOLD);
 
@@ -249,8 +378,10 @@ fn render_main_menu_overlay(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
         .padding(Padding::new(1, 1, 1, 1))
-        .title(title);
+        .title(title)
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
 
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -284,16 +415,18 @@ fn render_main_menu_overlay(
             Span::styled(
                 hotkey.to_string(),
                 Style::default()
-                    .fg(Color::LightBlue)
+                    .fg(theme::ACCENT)
                     .add_modifier(Modifier::BOLD),
             ),
         ])));
     }
 
     let list = List::new(list_items)
+        .style(Style::default().bg(theme::SURFACE_2).fg(theme::FG))
         .highlight_style(
             Style::default()
-                .add_modifier(Modifier::REVERSED)
+                .bg(theme::ACCENT)
+                .fg(theme::BG)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("");
@@ -328,7 +461,9 @@ fn render_error(frame: &mut Frame, area: Rect, model: &AppModel) {
         Block::default()
             .title(title)
             .borders(Borders::ALL)
-            .padding(Padding::horizontal(1)),
+            .border_style(Style::default().fg(theme::BORDER))
+            .padding(Padding::horizontal(1))
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
 
     frame.render_widget(paragraph, area);
@@ -353,7 +488,7 @@ fn render_projects(
     let search_text = if projects_view.query.is_empty() {
         Text::from(Line::from(Span::styled(
             "Type to filter projects…",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::DIM),
         )))
     } else {
         Text::from(projects_view.query.as_str())
@@ -361,8 +496,10 @@ fn render_projects(
     let search = Paragraph::new(search_text).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title("Find Projects"),
+            .title("Find Projects")
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(search, chunks[0]);
 
@@ -378,8 +515,10 @@ fn render_projects(
         let empty = Paragraph::new(message).block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme::BORDER))
                 .padding(Padding::horizontal(1))
-                .title("Recent Projects"),
+                .title("Recent Projects")
+                .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
         );
         frame.render_widget(empty, chunks[1]);
     } else {
@@ -387,18 +526,64 @@ fn render_projects(
         let max_width = (list_area.width as usize).saturating_sub(6);
         let (sessions_col_width, modified_col_width) =
             project_right_columns_width(projects, filtered_indices);
+
+        let dot_width = UnicodeWidthStr::width("● ");
+        let sep_width = UnicodeWidthStr::width(" │ ");
+        let fixed_width = dot_width
+            .saturating_add(sep_width.saturating_mul(3))
+            .saturating_add(sessions_col_width)
+            .saturating_add(modified_col_width);
+        let left_available = max_width.saturating_sub(fixed_width);
+
+        let min_name_col = 12usize;
+        let max_name_col = 26usize;
+        let min_path_col = 12usize;
+
+        let has_table_space = left_available >= min_name_col.saturating_add(min_path_col);
+        let max_name_width = filtered_indices
+            .iter()
+            .filter_map(|idx| projects.get(*idx))
+            .map(|project| UnicodeWidthStr::width(project.name.as_str()))
+            .max()
+            .unwrap_or(0);
+
+        let (name_col_width, path_col_width) = if has_table_space {
+            let name_col_width = max_name_width.clamp(min_name_col, max_name_col);
+            let name_col_width = name_col_width.min(left_available.saturating_sub(min_path_col));
+            let path_col_width = left_available.saturating_sub(name_col_width);
+            (name_col_width, path_col_width)
+        } else {
+            (0, 0)
+        };
+
         let list_items: Vec<ListItem> = filtered_indices
             .iter()
             .copied()
             .filter_map(|project_index| {
                 projects.get(project_index).map(|project| {
-                    project_list_item(
-                        project,
-                        max_width,
-                        sessions_col_width,
-                        modified_col_width,
-                        &projects_view.query,
-                    )
+                    let is_selected = projects_view
+                        .selected_project_paths
+                        .contains(&project.project_path);
+                    if name_col_width > 0 && path_col_width > 0 {
+                        project_table_list_item(
+                            project,
+                            is_selected,
+                            name_col_width,
+                            path_col_width,
+                            sessions_col_width,
+                            modified_col_width,
+                            &projects_view.query,
+                        )
+                    } else {
+                        project_list_item(
+                            project,
+                            is_selected,
+                            max_width,
+                            sessions_col_width,
+                            modified_col_width,
+                            &projects_view.query,
+                        )
+                    }
                 })
             })
             .collect();
@@ -407,12 +592,16 @@ fn render_projects(
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme::BORDER))
                     .padding(Padding::horizontal(1))
-                    .title("Recent Projects"),
+                    .title("Recent Projects")
+                    .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
             )
+            .style(Style::default().bg(theme::SURFACE_2).fg(theme::FG))
             .highlight_style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .bg(theme::ACCENT_BG)
+                    .fg(theme::FG)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("▸ ");
@@ -466,7 +655,7 @@ fn render_sessions(
     let search_text = if sessions_view.query.is_empty() {
         Text::from(Line::from(Span::styled(
             "Type to filter sessions…",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::DIM),
         )))
     } else {
         Text::from(sessions_view.query.as_str())
@@ -474,8 +663,10 @@ fn render_sessions(
     let search = Paragraph::new(search_text).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title(search_title),
+            .title(search_title)
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(search, chunks[0]);
 
@@ -484,7 +675,9 @@ fn render_sessions(
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .padding(Padding::horizontal(1)),
+                    .border_style(Style::default().fg(theme::BORDER))
+                    .padding(Padding::horizontal(1))
+                    .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
             );
         frame.render_widget(paragraph, chunks[1]);
         frame.render_widget(
@@ -500,11 +693,18 @@ fn render_sessions(
     };
 
     let filtered_indices = &sessions_view.filtered_indices;
-    let list_title = if sessions_view.query.trim().is_empty() {
+    let has_filter =
+        !sessions_view.query.trim().is_empty() || model.engine_filter != EngineFilter::All;
+    let engine_fragment = if model.engine_filter == EngineFilter::All {
+        String::new()
+    } else {
+        format!(" · Engine: {}", model.engine_filter.label())
+    };
+    let list_title = if !has_filter {
         format!("Sessions · {} total · newest first", project.sessions.len())
     } else {
         format!(
-            "Sessions · {}/{} shown · newest first",
+            "Sessions · {}/{} shown · newest first{engine_fragment}",
             filtered_indices.len(),
             project.sessions.len()
         )
@@ -521,8 +721,10 @@ fn render_sessions(
         let empty = Paragraph::new(message).block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme::BORDER))
                 .padding(Padding::horizontal(1))
-                .title(list_title),
+                .title(list_title)
+                .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
         );
         frame.render_widget(empty, chunks[1]);
     } else {
@@ -537,6 +739,7 @@ fn render_sessions(
                 project.sessions.get(index).map(|session| {
                     session_list_item(
                         session,
+                        sessions_view.selected_log_paths.contains(&session.log_path),
                         max_width,
                         size_col_width,
                         modified_col_width,
@@ -550,12 +753,16 @@ fn render_sessions(
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme::BORDER))
                     .padding(Padding::horizontal(1))
-                    .title(list_title),
+                    .title(list_title)
+                    .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
             )
+            .style(Style::default().bg(theme::SURFACE_2).fg(theme::FG))
             .highlight_style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .bg(theme::ACCENT_BG)
+                    .fg(theme::FG)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("▸ ");
@@ -599,7 +806,7 @@ fn render_tasks(
     let search_text = if tasks_view.query.is_empty() {
         Text::from(Line::from(Span::styled(
             "Type to filter tasks…",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::DIM),
         )))
     } else {
         Text::from(tasks_view.query.as_str())
@@ -607,8 +814,10 @@ fn render_tasks(
     let search = Paragraph::new(search_text).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title("Find Tasks"),
+            .title("Find Tasks")
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(search, chunks[0]);
 
@@ -624,8 +833,10 @@ fn render_tasks(
         let empty = Paragraph::new(message).block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme::BORDER))
                 .padding(Padding::horizontal(1))
-                .title("Tasks"),
+                .title("Tasks")
+                .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
         );
         frame.render_widget(empty, chunks[1]);
     } else {
@@ -640,6 +851,7 @@ fn render_tasks(
                 tasks.get(task_index).map(|task| {
                     task_list_item(
                         task,
+                        tasks_view.selected_task_ids.contains(&task.id),
                         max_width,
                         images_col_width,
                         modified_col_width,
@@ -654,12 +866,16 @@ fn render_tasks(
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme::BORDER))
                     .padding(Padding::horizontal(1))
-                    .title(list_title),
+                    .title(list_title)
+                    .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
             )
+            .style(Style::default().bg(theme::SURFACE_2).fg(theme::FG))
             .highlight_style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .bg(theme::ACCENT_BG)
+                    .fg(theme::FG)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("▸ ");
@@ -687,7 +903,7 @@ fn render_tasks(
             spans.push(Span::styled(
                 hint.to_string(),
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(theme::SUCCESS)
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -696,23 +912,23 @@ fn render_tasks(
     spans.push(Span::styled(
         format!("Engine: {}", tasks_view.engine.label()),
         Style::default()
-            .fg(Color::Blue)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     ));
     spans.push(Span::styled(
         " (Shift+Tab)".to_string(),
-        Style::default().fg(Color::Blue),
+        Style::default().fg(theme::ACCENT),
     ));
     if processes_running(model) {
         spans.push(Span::raw("  ·  "));
         spans.push(Span::styled(
             "P●".to_string(),
             Style::default()
-                .fg(Color::Green)
+                .fg(theme::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::DarkGray));
+    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(theme::DIM));
     frame.render_widget(footer, chunks[2]);
 }
 
@@ -781,16 +997,20 @@ fn render_new_session(
     let header = header_content.block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title(title),
+            .title(title)
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(header, chunks[0]);
 
     let editor_area = chunks[1];
     let editor_block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
         .padding(Padding::horizontal(1))
-        .title("Prompt");
+        .title("Prompt")
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
     let editor_inner = editor_block.inner(editor_area);
     frame.render_widget(editor_block, editor_area);
 
@@ -812,7 +1032,7 @@ fn render_new_session(
             lines.clear();
             lines.push(Line::from(Span::styled(
                 "Type or paste a prompt…",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::DIM),
             )));
         }
 
@@ -864,7 +1084,7 @@ fn render_new_session(
             spans.push(Span::styled(
                 hint.to_string(),
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(theme::SUCCESS)
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -873,36 +1093,36 @@ fn render_new_session(
     spans.push(Span::styled(
         format!("Engine: {}", new_session_view.engine.label()),
         Style::default()
-            .fg(Color::Blue)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     ));
     if is_fork {
         spans.push(Span::styled(
             " (locked)".to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::DIM),
         ));
     } else {
         spans.push(Span::styled(
             " (Shift+Tab)".to_string(),
-            Style::default().fg(Color::Blue),
+            Style::default().fg(theme::ACCENT),
         ));
     }
     spans.push(Span::raw("  ·  "));
     spans.push(Span::styled(
         format!("I/O: {}", new_session_view.io_mode.label()),
         Style::default()
-            .fg(Color::Blue)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     ));
     if is_fork {
         spans.push(Span::styled(
             " (locked)".to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::DIM),
         ));
     } else {
         spans.push(Span::styled(
             " (F4)".to_string(),
-            Style::default().fg(Color::Blue),
+            Style::default().fg(theme::ACCENT),
         ));
     }
     if processes_running(model) {
@@ -910,11 +1130,11 @@ fn render_new_session(
         spans.push(Span::styled(
             "P●".to_string(),
             Style::default()
-                .fg(Color::Green)
+                .fg(theme::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::DarkGray));
+    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(theme::DIM));
     frame.render_widget(footer, chunks[2]);
 }
 
@@ -948,16 +1168,20 @@ fn render_task_create(
     .block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title(title),
+            .title(title)
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(header, chunks[0]);
 
     let editor_area = chunks[1];
     let editor_block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
         .padding(Padding::horizontal(1))
-        .title("Task");
+        .title("Task")
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
     let editor_inner = editor_block.inner(editor_area);
     frame.render_widget(editor_block, editor_area);
 
@@ -979,7 +1203,7 @@ fn render_task_create(
             lines.clear();
             lines.push(Line::from(Span::styled(
                 "Type or paste a task…",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::DIM),
             )));
         }
 
@@ -1016,7 +1240,7 @@ fn render_task_create(
         }
     }
 
-    let footer_text = "Keys: edit text  Ctrl+S/Cmd+S=save  Ctrl+I/Cmd+I=insert image  Ctrl+P/Cmd+P=project path  Esc=cancel  Ctrl+Q/Ctrl+C=quit  F1/?=help";
+    let footer_text = "Keys: edit text  Ctrl+S/Cmd+S=save  Ctrl+I/Cmd+I=insert image  Ctrl+V=paste image  Ctrl+P/Cmd+P=project path  Esc=cancel  Ctrl+Q/Ctrl+C=quit  F1/?=help";
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(footer_text.to_string()));
     if let Some(notice) = model.notice.as_deref() {
@@ -1030,7 +1254,7 @@ fn render_task_create(
             spans.push(Span::styled(
                 hint.to_string(),
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(theme::SUCCESS)
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -1039,7 +1263,7 @@ fn render_task_create(
     spans.push(Span::styled(
         format!("Images: {}", task_create_view.image_paths.len()),
         Style::default()
-            .fg(Color::Blue)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     ));
     if processes_running(model) {
@@ -1047,14 +1271,15 @@ fn render_task_create(
         spans.push(Span::styled(
             "P●".to_string(),
             Style::default()
-                .fg(Color::Green)
+                .fg(theme::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::DarkGray));
+    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(theme::DIM));
     frame.render_widget(footer, chunks[2]);
 
     if let Some(overlay) = &task_create_view.overlay {
+        dim_area(frame, frame.area());
         render_task_create_overlay(frame, area, overlay);
     }
 }
@@ -1064,9 +1289,19 @@ fn render_task_create_overlay(
     area: Rect,
     overlay: &crate::app::TaskCreateOverlay,
 ) {
-    let (title, editor) = match overlay {
-        crate::app::TaskCreateOverlay::ImagePath(editor) => ("Insert Image Path", editor),
-        crate::app::TaskCreateOverlay::ProjectPath(editor) => ("Project Path", editor),
+    let (title, editor, hint, placeholder) = match overlay {
+        crate::app::TaskCreateOverlay::ImagePath(editor) => (
+            "Insert Image",
+            editor,
+            "Keys: Enter=confirm (empty=clipboard)  Ctrl+V=paste image  Esc=cancel  Backspace=delete",
+            "Type a path, or press Ctrl+V…",
+        ),
+        crate::app::TaskCreateOverlay::ProjectPath(editor) => (
+            "Project Path",
+            editor,
+            "Keys: Enter=confirm  Esc=cancel  Backspace=delete",
+            "Type a path…",
+        ),
     };
 
     let popup = centered_rect(72, 24, area);
@@ -1074,8 +1309,10 @@ fn render_task_create_overlay(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
         .padding(Padding::horizontal(1))
-        .title(title);
+        .title(title)
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -1090,8 +1327,8 @@ fn render_task_create_overlay(
 
     let input_text = if editor.text.is_empty() {
         Text::from(Line::from(Span::styled(
-            "Type a path…",
-            Style::default().fg(Color::DarkGray),
+            placeholder,
+            Style::default().fg(theme::DIM),
         )))
     } else {
         Text::from(editor.text.as_str())
@@ -1100,13 +1337,15 @@ fn render_task_create_overlay(
     let input = Paragraph::new(input_text).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title("Path"),
+            .title("Path")
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(input, chunks[0]);
 
-    let hint = Paragraph::new("Keys: Enter=confirm  Esc=cancel  Backspace=delete")
-        .style(Style::default().fg(Color::DarkGray))
+    let hint = Paragraph::new(hint)
+        .style(Style::default().fg(theme::DIM))
         .alignment(Alignment::Center);
     frame.render_widget(hint, chunks[1]);
 
@@ -1163,8 +1402,10 @@ fn render_task_detail(
     .block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title(title_hint),
+            .title(title_hint)
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(header, chunks[0]);
 
@@ -1192,8 +1433,10 @@ fn render_task_detail(
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme::BORDER))
                 .padding(Padding::horizontal(1))
-                .title("Task"),
+                .title("Task")
+                .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
         );
     frame.render_widget(body, chunks[1]);
 
@@ -1211,7 +1454,7 @@ fn render_task_detail(
             spans.push(Span::styled(
                 hint.to_string(),
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(theme::SUCCESS)
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -1220,23 +1463,23 @@ fn render_task_detail(
     spans.push(Span::styled(
         format!("Engine: {}", task_detail_view.engine.label()),
         Style::default()
-            .fg(Color::Blue)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     ));
     spans.push(Span::styled(
         " (Shift+Tab)".to_string(),
-        Style::default().fg(Color::Blue),
+        Style::default().fg(theme::ACCENT),
     ));
     if processes_running(model) {
         spans.push(Span::raw("  ·  "));
         spans.push(Span::styled(
             "P●".to_string(),
             Style::default()
-                .fg(Color::Green)
+                .fg(theme::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::DarkGray));
+    let footer = Paragraph::new(Line::from(spans)).style(Style::default().fg(theme::DIM));
     frame.render_widget(footer, chunks[2]);
 }
 
@@ -1273,8 +1516,10 @@ fn render_processes(
     .block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title("Processes"),
+            .title("Processes")
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(header, chunks[0]);
 
@@ -1291,12 +1536,16 @@ fn render_processes(
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme::BORDER))
                 .padding(Padding::horizontal(1))
-                .title("Spawned"),
+                .title("Spawned")
+                .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
         )
+        .style(Style::default().bg(theme::SURFACE_2).fg(theme::FG))
         .highlight_style(
             Style::default()
-                .fg(Color::Yellow)
+                .bg(theme::ACCENT_BG)
+                .fg(theme::FG)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▸ ");
@@ -1370,8 +1619,10 @@ fn render_process_output(
     .block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title(title),
+            .title(title)
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(header, chunks[0]);
 
@@ -1381,8 +1632,10 @@ fn render_process_output(
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme::BORDER))
                 .padding(Padding::horizontal(1))
-                .title("Output"),
+                .title("Output")
+                .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
         );
     frame.render_widget(body, chunks[1]);
 
@@ -1454,7 +1707,7 @@ fn footer_paragraph(
             spans.push(Span::styled(
                 hint.to_string(),
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(theme::SUCCESS)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
@@ -1470,12 +1723,12 @@ fn footer_paragraph(
         spans.push(Span::styled(
             "P●".to_string(),
             Style::default()
-                .fg(Color::Green)
+                .fg(theme::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         ));
     }
 
-    Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::DarkGray))
+    Paragraph::new(Line::from(spans)).style(Style::default().fg(theme::DIM))
 }
 
 fn processes_running(model: &AppModel) -> bool {
@@ -1588,8 +1841,8 @@ fn highlight_query_spans(text: &str, query: &str, base_style: Style) -> Vec<Span
     }
 
     let highlighted_style = base_style
-        .bg(Color::Blue)
-        .fg(Color::White)
+        .bg(theme::ACCENT_BG)
+        .fg(theme::FG)
         .add_modifier(Modifier::BOLD);
     let text_lower = text.to_ascii_lowercase();
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -1655,7 +1908,7 @@ fn process_list_item(
     let running = process.status.is_running();
     let online_dot_width = UnicodeWidthStr::width("● ");
     let dot = if running {
-        Span::styled("● ", Style::default().fg(Color::Green))
+        Span::styled("● ", Style::default().fg(theme::SUCCESS))
     } else {
         Span::raw("  ")
     };
@@ -1701,14 +1954,23 @@ fn process_list_item(
         dot,
         Span::raw(left),
         Span::raw(" ".repeat(padding_width)),
-        Span::styled(status, Style::default().fg(Color::DarkGray)),
-        Span::styled(column_sep, Style::default().fg(Color::DarkGray)),
-        Span::styled(started, Style::default().fg(Color::DarkGray)),
+        Span::styled(status, Style::default().fg(theme::DIM)),
+        Span::styled(column_sep, Style::default().fg(theme::DIM)),
+        Span::styled(started, Style::default().fg(theme::DIM)),
     ]))
+}
+
+fn apply_multi_select_style(item: ListItem<'static>, is_selected: bool) -> ListItem<'static> {
+    if is_selected {
+        item.style(Style::default().bg(theme::SURFACE))
+    } else {
+        item
+    }
 }
 
 fn project_list_item(
     project: &crate::domain::ProjectSummary,
+    is_selected: bool,
     max_width: usize,
     sessions_col_width: usize,
     modified_col_width: usize,
@@ -1721,14 +1983,14 @@ fn project_list_item(
     let online = is_online(project.last_modified);
     let online_dot_width = UnicodeWidthStr::width("● ");
     let dot = if online {
-        Span::styled("● ", Style::default().fg(Color::Green))
+        Span::styled("● ", Style::default().fg(theme::ACCENT))
     } else {
         Span::raw("  ")
     };
 
     let content_width = max_width.saturating_sub(online_dot_width);
     if content_width == 0 {
-        return ListItem::new(Line::from(vec![dot]));
+        return apply_multi_select_style(ListItem::new(Line::from(vec![dot])), is_selected);
     }
 
     let name = project.name.as_str();
@@ -1764,7 +2026,7 @@ fn project_list_item(
             query,
             Style::default().add_modifier(Modifier::BOLD),
         ));
-        return ListItem::new(Line::from(spans));
+        return apply_multi_select_style(ListItem::new(Line::from(spans)), is_selected);
     }
 
     let left_available = content_width.saturating_sub(right_width + gap);
@@ -1798,7 +2060,7 @@ fn project_list_item(
             spans.extend(highlight_query_spans(
                 &path,
                 query,
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::DIM),
             ));
             left_width += separator_width + path_width;
         }
@@ -1815,17 +2077,71 @@ fn project_list_item(
 
     let padding_width = content_width.saturating_sub(left_width + right_width);
     spans.push(Span::raw(" ".repeat(padding_width)));
-    spans.push(Span::styled(
-        sessions_col,
-        Style::default().fg(Color::DarkGray),
-    ));
-    spans.push(Span::styled(
-        column_sep,
-        Style::default().fg(Color::DarkGray),
-    ));
-    spans.push(Span::styled(modified, Style::default().fg(Color::DarkGray)));
+    spans.push(Span::styled(sessions_col, Style::default().fg(theme::DIM)));
+    spans.push(Span::styled(column_sep, Style::default().fg(theme::DIM)));
+    spans.push(Span::styled(modified, Style::default().fg(theme::DIM)));
 
-    ListItem::new(Line::from(spans))
+    apply_multi_select_style(ListItem::new(Line::from(spans)), is_selected)
+}
+
+fn project_table_list_item(
+    project: &crate::domain::ProjectSummary,
+    is_selected: bool,
+    name_col_width: usize,
+    path_col_width: usize,
+    sessions_col_width: usize,
+    modified_col_width: usize,
+    query: &str,
+) -> ListItem<'static> {
+    let online = is_online(project.last_modified);
+    let dot = if online {
+        Span::styled("● ", Style::default().fg(theme::ACCENT))
+    } else {
+        Span::raw("  ")
+    };
+
+    let name = truncate_end(project.name.as_str(), name_col_width);
+    let name = pad_right(&name, name_col_width);
+    let name_spans = highlight_query_spans(
+        &name,
+        query,
+        Style::default().fg(theme::FG).add_modifier(Modifier::BOLD),
+    );
+
+    let path = project.project_path.display().to_string();
+    let path = truncate_middle(&path, path_col_width);
+    let path = pad_right(&path, path_col_width);
+    let path_spans = highlight_query_spans(&path, query, Style::default().fg(theme::DIM));
+
+    let sessions_count = project.sessions.len();
+    let session_word = if sessions_count == 1 {
+        "session"
+    } else {
+        "sessions"
+    };
+    let sessions_col = format!("{} {session_word}", format_commas_usize(sessions_count));
+    let sessions_col = pad_left(&sessions_col, sessions_col_width);
+
+    let modified = if project.last_modified.is_some() {
+        relative_time_ago(project.last_modified)
+    } else {
+        "-".to_string()
+    };
+    let modified = pad_left(&modified, modified_col_width);
+
+    let sep = Span::styled(" │ ", Style::default().fg(theme::BORDER));
+
+    let mut spans = Vec::new();
+    spans.push(dot);
+    spans.extend(name_spans);
+    spans.push(sep.clone());
+    spans.extend(path_spans);
+    spans.push(sep.clone());
+    spans.push(Span::styled(sessions_col, Style::default().fg(theme::DIM)));
+    spans.push(sep);
+    spans.push(Span::styled(modified, Style::default().fg(theme::DIM)));
+
+    apply_multi_select_style(ListItem::new(Line::from(spans)), is_selected)
 }
 
 fn is_online(modified: Option<SystemTime>) -> bool {
@@ -1843,6 +2159,7 @@ fn is_online(modified: Option<SystemTime>) -> bool {
 
 fn session_list_item(
     session: &crate::domain::SessionSummary,
+    is_selected: bool,
     max_width: usize,
     size_col_width: usize,
     modified_col_width: usize,
@@ -1855,14 +2172,14 @@ fn session_list_item(
     let online = is_online(session.file_modified);
     let online_dot_width = UnicodeWidthStr::width("● ");
     let dot = if online {
-        Span::styled("● ", Style::default().fg(Color::Green))
+        Span::styled("● ", Style::default().fg(theme::ACCENT))
     } else {
         Span::raw("  ")
     };
 
     let content_width = max_width.saturating_sub(online_dot_width);
     if content_width == 0 {
-        return ListItem::new(Line::from(vec![dot]));
+        return apply_multi_select_style(ListItem::new(Line::from(vec![dot])), is_selected);
     }
 
     let size = format_size(session.file_size_bytes, DECIMAL);
@@ -1881,7 +2198,7 @@ fn session_list_item(
         let mut spans = Vec::new();
         spans.push(dot);
         spans.extend(highlight_query_spans(&title, query, Style::default()));
-        return ListItem::new(Line::from(spans));
+        return apply_multi_select_style(ListItem::new(Line::from(spans)), is_selected);
     }
 
     let left_available = content_width.saturating_sub(right_width + gap);
@@ -1893,18 +2210,16 @@ fn session_list_item(
     spans.push(dot);
     spans.extend(highlight_query_spans(&title, query, Style::default()));
     spans.push(Span::raw(" ".repeat(padding_width)));
-    spans.push(Span::styled(size, Style::default().fg(Color::DarkGray)));
-    spans.push(Span::styled(
-        column_sep,
-        Style::default().fg(Color::DarkGray),
-    ));
-    spans.push(Span::styled(modified, Style::default().fg(Color::DarkGray)));
+    spans.push(Span::styled(size, Style::default().fg(theme::DIM)));
+    spans.push(Span::styled(column_sep, Style::default().fg(theme::DIM)));
+    spans.push(Span::styled(modified, Style::default().fg(theme::DIM)));
 
-    ListItem::new(Line::from(spans))
+    apply_multi_select_style(ListItem::new(Line::from(spans)), is_selected)
 }
 
 fn task_list_item(
     task: &crate::app::TaskSummaryRow,
+    is_selected: bool,
     max_width: usize,
     images_col_width: usize,
     modified_col_width: usize,
@@ -1932,7 +2247,7 @@ fn task_list_item(
         let title = truncate_end(title, max_width);
         let spans =
             highlight_query_spans(&title, query, Style::default().add_modifier(Modifier::BOLD));
-        return ListItem::new(Line::from(spans));
+        return apply_multi_select_style(ListItem::new(Line::from(spans)), is_selected);
     }
 
     let left_available = max_width.saturating_sub(right_width + gap);
@@ -1965,7 +2280,7 @@ fn task_list_item(
             spans.extend(highlight_query_spans(
                 &path,
                 query,
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::DIM),
             ));
             left_width += separator_width + path_width;
         }
@@ -1982,14 +2297,11 @@ fn task_list_item(
 
     let padding_width = max_width.saturating_sub(left_width + right_width);
     spans.push(Span::raw(" ".repeat(padding_width)));
-    spans.push(Span::styled(images, Style::default().fg(Color::DarkGray)));
-    spans.push(Span::styled(
-        column_sep,
-        Style::default().fg(Color::DarkGray),
-    ));
-    spans.push(Span::styled(modified, Style::default().fg(Color::DarkGray)));
+    spans.push(Span::styled(images, Style::default().fg(theme::DIM)));
+    spans.push(Span::styled(column_sep, Style::default().fg(theme::DIM)));
+    spans.push(Span::styled(modified, Style::default().fg(theme::DIM)));
 
-    ListItem::new(Line::from(spans))
+    apply_multi_select_style(ListItem::new(Line::from(spans)), is_selected)
 }
 
 fn truncate_end(text: &str, max_width: usize) -> String {
@@ -2128,8 +2440,10 @@ fn render_session_detail(
     .block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title(title),
+            .title(title)
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(header, chunks[0]);
 
@@ -2149,10 +2463,8 @@ fn render_session_detail(
     let list_area = panels[0];
     let detail_area = panels[1];
 
-    let focused_border_style = Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
-    let unfocused_border_style = Style::default().fg(Color::DarkGray);
+    let focused_border_style = Style::default().fg(theme::FG).add_modifier(Modifier::BOLD);
+    let unfocused_border_style = Style::default().fg(theme::BORDER);
     let focused = detail_view.focus;
 
     let timeline_border_type = if focused == SessionDetailFocus::Timeline {
@@ -2210,13 +2522,16 @@ fn render_session_detail(
         .padding(Padding::horizontal(1))
         .border_style(timeline_border_style)
         .border_type(timeline_border_type)
-        .title(Title::from(Span::styled("Timeline", timeline_title_style)));
+        .title(Title::from(Span::styled("Timeline", timeline_title_style)))
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
     let list_inner = list_block.inner(list_area);
     let list = List::new(list_items)
         .block(list_block)
+        .style(Style::default().bg(theme::SURFACE_2).fg(theme::FG))
         .highlight_style(
             Style::default()
-                .fg(Color::Yellow)
+                .bg(theme::ACCENT_BG)
+                .fg(theme::FG)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▸ ");
@@ -2235,17 +2550,19 @@ fn render_session_detail(
     let list_total = detail_view.items.len();
     if list_total > list_viewport && list_viewport > 0 {
         let scrollbar_style = if focused == SessionDetailFocus::Timeline {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme::FG)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(theme::BORDER)
         };
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .thumb_style(scrollbar_style)
-            .track_style(Style::default().fg(Color::DarkGray))
+            .track_style(Style::default().fg(theme::BORDER))
             .begin_style(scrollbar_style)
             .end_style(scrollbar_style);
-        let mut scrollbar_state = ScrollbarState::new(list_total)
-            .position(state.offset())
+        let max_scroll = list_total.saturating_sub(list_viewport);
+        let content_length = max_scroll.saturating_add(1);
+        let mut scrollbar_state = ScrollbarState::new(content_length)
+            .position(state.offset().min(max_scroll))
             .viewport_content_length(list_viewport);
         frame.render_stateful_widget(
             scrollbar,
@@ -2263,10 +2580,13 @@ fn render_session_detail(
         .padding(Padding::horizontal(1))
         .border_style(details_border_style)
         .border_type(details_border_type)
-        .title(Title::from(Span::styled("Details", details_title_style)));
+        .title(Title::from(Span::styled("Details", details_title_style)))
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
     let detail_inner = detail_block.inner(detail_area);
     let detail_viewport = detail_inner.height as usize;
-    let detail_total = estimate_wrapped_text_height(&detail_text, detail_inner.width);
+    let detail_total = Paragraph::new(detail_text.clone())
+        .wrap(Wrap { trim: false })
+        .line_count(detail_inner.width);
     let max_scroll = detail_total.saturating_sub(detail_viewport);
     let scroll = (detail_view.details_scroll as usize).min(max_scroll);
     let scroll_u16 = u16::try_from(scroll).unwrap_or(u16::MAX);
@@ -2279,17 +2599,19 @@ fn render_session_detail(
 
     if detail_total > detail_viewport && detail_viewport > 0 {
         let scrollbar_style = if focused == SessionDetailFocus::Details {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme::FG)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(theme::BORDER)
         };
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .thumb_style(scrollbar_style)
-            .track_style(Style::default().fg(Color::DarkGray))
+            .track_style(Style::default().fg(theme::BORDER))
             .begin_style(scrollbar_style)
             .end_style(scrollbar_style);
-        let mut scrollbar_state = ScrollbarState::new(detail_total)
-            .position(scroll)
+        let max_scroll = detail_total.saturating_sub(detail_viewport);
+        let content_length = max_scroll.saturating_add(1);
+        let mut scrollbar_state = ScrollbarState::new(content_length)
+            .position(scroll.min(max_scroll))
             .viewport_content_length(detail_viewport);
         frame.render_stateful_widget(
             scrollbar,
@@ -2312,6 +2634,10 @@ fn render_session_detail(
     );
     frame.render_widget(footer, chunks[2]);
 
+    if detail_view.context_overlay_open || detail_view.output_overlay_open {
+        dim_area(frame, frame.area());
+    }
+
     if detail_view.context_overlay_open {
         render_context_overlay(frame, full_area, detail_view);
     }
@@ -2319,118 +2645,6 @@ fn render_session_detail(
     if detail_view.output_overlay_open {
         render_last_output_overlay(frame, full_area, detail_view);
     }
-}
-
-fn estimate_wrapped_text_height(text: &Text<'static>, wrap_width: u16) -> usize {
-    let wrap_width = wrap_width as usize;
-    if wrap_width == 0 {
-        return 0;
-    }
-
-    if text.lines.is_empty() {
-        return 1;
-    }
-
-    text.lines
-        .iter()
-        .map(|line| estimate_wrapped_line_height(line, wrap_width))
-        .sum()
-}
-
-fn estimate_wrapped_line_height(line: &Line<'static>, wrap_width: usize) -> usize {
-    if wrap_width == 0 {
-        return 0;
-    }
-    if line.spans.is_empty() {
-        return 1;
-    }
-
-    let mut rows = 1usize;
-    let mut col = 0usize;
-    let mut token_is_whitespace: Option<bool> = None;
-    let mut token_width = 0usize;
-    let mut token_chars: Vec<char> = Vec::new();
-
-    for span in &line.spans {
-        for ch in span.content.chars() {
-            let is_whitespace = ch.is_whitespace();
-
-            if token_is_whitespace.is_some_and(|ws| ws != is_whitespace) {
-                apply_wrap_token(
-                    wrap_width,
-                    token_is_whitespace.unwrap_or(false),
-                    &token_chars,
-                    token_width,
-                    &mut rows,
-                    &mut col,
-                );
-                token_chars.clear();
-                token_width = 0;
-            }
-
-            token_is_whitespace = Some(is_whitespace);
-            token_chars.push(ch);
-            token_width = token_width.saturating_add(display_char_width(ch));
-        }
-    }
-
-    if token_is_whitespace.is_some() {
-        apply_wrap_token(
-            wrap_width,
-            token_is_whitespace.unwrap_or(false),
-            &token_chars,
-            token_width,
-            &mut rows,
-            &mut col,
-        );
-    }
-
-    rows
-}
-
-fn apply_wrap_token(
-    wrap_width: usize,
-    _is_whitespace: bool,
-    token_chars: &[char],
-    token_width: usize,
-    rows: &mut usize,
-    col: &mut usize,
-) {
-    if wrap_width == 0 || token_chars.is_empty() || token_width == 0 {
-        return;
-    }
-
-    if token_width > wrap_width {
-        if *col > 0 {
-            *rows = rows.saturating_add(1);
-            *col = 0;
-        }
-        for ch in token_chars {
-            let w = display_char_width(*ch);
-            if w == 0 || w > wrap_width {
-                continue;
-            }
-            if *col + w > wrap_width {
-                *rows = rows.saturating_add(1);
-                *col = 0;
-            }
-            *col = col.saturating_add(w);
-        }
-        return;
-    }
-
-    if *col > 0 && *col + token_width > wrap_width {
-        *rows = rows.saturating_add(1);
-        *col = 0;
-    }
-    *col = col.saturating_add(token_width);
-}
-
-fn display_char_width(ch: char) -> usize {
-    if ch == '\t' {
-        return 4;
-    }
-    UnicodeWidthChar::width(ch).unwrap_or(0)
 }
 
 fn session_detail_footer_line(
@@ -2475,16 +2689,16 @@ fn kind_label(kind: TimelineItemKind) -> &'static str {
 
 fn kind_style(kind: TimelineItemKind) -> Style {
     match kind {
-        TimelineItemKind::Turn => Style::default().fg(Color::DarkGray),
+        TimelineItemKind::Turn => Style::default().fg(theme::DIM),
         TimelineItemKind::User => Style::default()
-            .fg(Color::Cyan)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
-        TimelineItemKind::Assistant => Style::default().fg(Color::Green),
-        TimelineItemKind::Thinking => Style::default().fg(Color::Magenta),
-        TimelineItemKind::ToolCall => Style::default().fg(Color::LightBlue),
-        TimelineItemKind::ToolOutput => Style::default().fg(Color::LightBlue),
-        TimelineItemKind::TokenCount => Style::default().fg(Color::Yellow),
-        TimelineItemKind::Note => Style::default().fg(Color::DarkGray),
+        TimelineItemKind::Assistant => Style::default().fg(theme::FG),
+        TimelineItemKind::Thinking => Style::default().fg(theme::MUTED),
+        TimelineItemKind::ToolCall => Style::default().fg(theme::ACCENT),
+        TimelineItemKind::ToolOutput => Style::default().fg(theme::ACCENT),
+        TimelineItemKind::TokenCount => Style::default().fg(theme::MUTED),
+        TimelineItemKind::Note => Style::default().fg(theme::DIM),
     }
 }
 
@@ -2691,9 +2905,9 @@ fn timeline_list_item(
         Span::raw("  "),
         Span::raw(summary),
         Span::raw(" ".repeat(padding_width)),
-        Span::styled(cols.offset, Style::default().fg(Color::DarkGray)),
-        Span::styled(column_sep, Style::default().fg(Color::DarkGray)),
-        Span::styled(cols.duration, Style::default().fg(Color::DarkGray)),
+        Span::styled(cols.offset, Style::default().fg(theme::DIM)),
+        Span::styled(column_sep, Style::default().fg(theme::DIM)),
+        Span::styled(cols.duration, Style::default().fg(theme::DIM)),
     ]))
 }
 
@@ -2702,10 +2916,12 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
         .selected
         .min(detail_view.items.len().saturating_sub(1));
     let Some(item) = detail_view.items.get(selected) else {
-        return Text::from("No timeline items.");
+        let mut text = Text::from("No timeline items.");
+        add_detail_bottom_padding(&mut text);
+        return text;
     };
 
-    let key_style = Style::default().fg(Color::DarkGray);
+    let key_style = Style::default().fg(theme::DIM);
     let value_style = Style::default();
     let summary_style = Style::default().add_modifier(Modifier::BOLD);
 
@@ -2750,7 +2966,7 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
                 text.lines.push(Line::from(Span::styled(
                     "Output:",
                     Style::default()
-                        .fg(Color::LightBlue)
+                        .fg(theme::ACCENT)
                         .add_modifier(Modifier::BOLD),
                 )));
                 text.lines.extend(render_plain_highlight_lines(
@@ -2760,12 +2976,13 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
                 text.lines.push(Line::from(Span::styled(
                     "Input:",
                     Style::default()
-                        .fg(Color::LightBlue)
+                        .fg(theme::ACCENT)
                         .add_modifier(Modifier::BOLD),
                 )));
                 text.lines.extend(render_plain_highlight_lines(
                     truncate_chars(&item.detail, max).as_str(),
                 ));
+                add_detail_bottom_padding(&mut text);
                 return text;
             }
         }
@@ -2774,7 +2991,15 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
     let truncated = truncate_chars(&item.detail, max);
     text.lines
         .extend(render_detail_lines_for_kind(item.kind, &truncated));
+    add_detail_bottom_padding(&mut text);
     text
+}
+
+fn add_detail_bottom_padding(text: &mut Text<'static>) {
+    const PAD_LINES: usize = 2;
+    for _ in 0..PAD_LINES {
+        text.lines.push(Line::from(""));
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2810,9 +3035,9 @@ fn render_plain_highlight_lines(text: &str) -> Vec<Line<'static>> {
 
             let trimmed = raw_line.trim_start();
             let style = match trimmed.chars().next() {
-                Some('+') => Style::default().fg(Color::Green),
-                Some('-') => Style::default().fg(Color::Red),
-                _ if trimmed.starts_with("@@") => Style::default().fg(Color::Cyan),
+                Some('+') => Style::default().fg(theme::SUCCESS),
+                Some('-') => Style::default().fg(theme::ERROR),
+                _ if trimmed.starts_with("@@") => Style::default().fg(theme::MUTED),
                 _ => Style::default(),
             };
             vec![Line::from(Span::styled(raw_line.to_string(), style))]
@@ -2838,10 +3063,10 @@ fn render_markdownish_lines(text: &str) -> Vec<Line<'static>> {
             }
 
             let style = match trimmed.chars().next() {
-                Some('+') => Style::default().fg(Color::Green),
-                Some('-') => Style::default().fg(Color::Red),
-                _ if trimmed.starts_with("@@") => Style::default().fg(Color::Cyan),
-                _ => Style::default().fg(Color::LightBlue),
+                Some('+') => Style::default().fg(theme::SUCCESS),
+                Some('-') => Style::default().fg(theme::ERROR),
+                _ if trimmed.starts_with("@@") => Style::default().fg(theme::MUTED),
+                _ => Style::default().fg(theme::MUTED),
             };
             lines.push(Line::from(Span::styled(raw_line.to_string(), style)));
             continue;
@@ -2858,15 +3083,13 @@ fn render_markdownish_lines(text: &str) -> Vec<Line<'static>> {
         if let Some((level, heading_text)) = parse_markdown_heading(trimmed) {
             let style = match level {
                 1 => Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme::ACCENT)
                     .add_modifier(Modifier::BOLD)
                     .add_modifier(Modifier::UNDERLINED),
                 2 => Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme::ACCENT)
                     .add_modifier(Modifier::BOLD),
-                _ => Style::default()
-                    .fg(Color::LightYellow)
-                    .add_modifier(Modifier::BOLD),
+                _ => Style::default().fg(theme::FG).add_modifier(Modifier::BOLD),
             };
             let mut spans = Vec::new();
             if !indent.is_empty() {
@@ -2878,7 +3101,7 @@ fn render_markdownish_lines(text: &str) -> Vec<Line<'static>> {
         }
 
         if let Some(quote_text) = trimmed.strip_prefix("> ") {
-            let quote_style = Style::default().fg(Color::DarkGray);
+            let quote_style = Style::default().fg(theme::DIM);
             let mut spans = Vec::new();
             if !indent.is_empty() {
                 spans.push(Span::raw(indent));
@@ -2898,7 +3121,7 @@ fn render_markdownish_lines(text: &str) -> Vec<Line<'static>> {
             if !indent.is_empty() {
                 spans.push(Span::raw(indent));
             }
-            spans.push(Span::styled("• ", Style::default().fg(Color::Yellow)));
+            spans.push(Span::styled("• ", Style::default().fg(theme::ACCENT)));
             spans.extend(markdownish_inline_spans(list_text, Style::default()));
             lines.push(Line::from(spans));
             continue;
@@ -2975,15 +3198,15 @@ fn push_json_segment(segments: &mut Vec<JsonSegment>, kind: JsonStyleKind, text:
 
 fn json_style(kind: JsonStyleKind) -> Style {
     match kind {
-        JsonStyleKind::Default => Style::default(),
-        JsonStyleKind::Punctuation => Style::default().fg(Color::DarkGray),
+        JsonStyleKind::Default => Style::default().fg(theme::FG),
+        JsonStyleKind::Punctuation => Style::default().fg(theme::DIM),
         JsonStyleKind::Key => Style::default()
-            .fg(Color::Yellow)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
-        JsonStyleKind::String => Style::default().fg(Color::Green),
-        JsonStyleKind::Number => Style::default().fg(Color::Magenta),
-        JsonStyleKind::Boolean => Style::default().fg(Color::Cyan),
-        JsonStyleKind::Null => Style::default().fg(Color::DarkGray),
+        JsonStyleKind::String => Style::default().fg(theme::FG),
+        JsonStyleKind::Number => Style::default().fg(theme::ACCENT),
+        JsonStyleKind::Boolean => Style::default().fg(theme::MUTED),
+        JsonStyleKind::Null => Style::default().fg(theme::DIM),
     }
 }
 
@@ -3282,7 +3505,7 @@ fn markdownish_inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>>
                     let code = after.get(0..end_rel).unwrap_or("");
                     spans.push(Span::styled(
                         code.to_string(),
-                        Style::default().fg(Color::LightBlue),
+                        Style::default().fg(theme::ACCENT),
                     ));
                     remaining = after.get(end_rel + 1..).unwrap_or("");
                 } else {
@@ -3318,7 +3541,7 @@ fn markdownish_inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>>
                 spans.extend(markdownish_inline_spans(
                     link_text,
                     Style::default()
-                        .fg(Color::LightBlue)
+                        .fg(theme::ACCENT)
                         .add_modifier(Modifier::UNDERLINED),
                 ));
                 if let Some(rest_after_paren) = rest_after.strip_prefix('(') {
@@ -3438,8 +3661,10 @@ fn render_project_stats_overlay(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
         .padding(Padding::horizontal(1))
-        .title("Project Stats");
+        .title("Project Stats")
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -3450,18 +3675,18 @@ fn render_project_stats_overlay(
 
     let max_line_width = (chunks[0].width as usize).saturating_sub(1);
 
-    let label_style = Style::default().fg(Color::Gray);
-    let value_style = Style::default().fg(Color::White);
-    let dim_style = Style::default().fg(Color::DarkGray);
-    let path_style = Style::default().fg(Color::LightBlue);
+    let label_style = Style::default().fg(theme::MUTED);
+    let value_style = Style::default().fg(theme::FG);
+    let dim_style = Style::default().fg(theme::DIM);
+    let path_style = Style::default().fg(theme::ACCENT);
     let section_style = Style::default()
-        .fg(Color::LightBlue)
+        .fg(theme::ACCENT)
         .add_modifier(Modifier::BOLD);
     let token_style = Style::default()
-        .fg(Color::Yellow)
+        .fg(theme::ACCENT)
         .add_modifier(Modifier::BOLD);
     let warning_style = Style::default()
-        .fg(Color::Yellow)
+        .fg(theme::ACCENT)
         .add_modifier(Modifier::BOLD);
 
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -3556,7 +3781,7 @@ fn render_project_stats_overlay(
     frame.render_widget(paragraph, chunks[0]);
 
     let hint = Paragraph::new("Keys: arrows/PgUp/PgDn=scroll  Esc/Backspace=close")
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme::DIM))
         .alignment(Alignment::Center);
     frame.render_widget(hint, chunks[1]);
 }
@@ -3571,8 +3796,10 @@ fn render_session_stats_overlay(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
         .padding(Padding::horizontal(1))
-        .title("Session Stats");
+        .title("Session Stats")
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -3583,30 +3810,32 @@ fn render_session_stats_overlay(
 
     let max_line_width = (chunks[0].width as usize).saturating_sub(1);
 
-    let label_style = Style::default().fg(Color::Gray);
-    let value_style = Style::default().fg(Color::White);
-    let dim_style = Style::default().fg(Color::DarkGray);
-    let path_style = Style::default().fg(Color::LightBlue);
+    let label_style = Style::default().fg(theme::MUTED);
+    let value_style = Style::default().fg(theme::FG);
+    let dim_style = Style::default().fg(theme::DIM);
+    let path_style = Style::default().fg(theme::ACCENT);
     let section_style = Style::default()
-        .fg(Color::LightBlue)
+        .fg(theme::ACCENT)
         .add_modifier(Modifier::BOLD);
     let token_style = Style::default()
-        .fg(Color::Yellow)
+        .fg(theme::ACCENT)
         .add_modifier(Modifier::BOLD);
     let success_style = Style::default()
-        .fg(Color::Green)
+        .fg(theme::SUCCESS)
         .add_modifier(Modifier::BOLD);
     let invalid_style = Style::default()
-        .fg(Color::Yellow)
+        .fg(theme::ACCENT)
         .add_modifier(Modifier::BOLD);
-    let error_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
-    let unknown_style = Style::default()
-        .fg(Color::DarkGray)
+    let error_style = Style::default()
+        .fg(theme::ERROR)
         .add_modifier(Modifier::BOLD);
+    let unknown_style = Style::default().fg(theme::DIM).add_modifier(Modifier::BOLD);
     let added_style = Style::default()
-        .fg(Color::Green)
+        .fg(theme::SUCCESS)
         .add_modifier(Modifier::BOLD);
-    let removed_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
+    let removed_style = Style::default()
+        .fg(theme::ERROR)
+        .add_modifier(Modifier::BOLD);
 
     let duration = overlay.stats.duration_ms.and_then(|ms| {
         if ms >= 0 {
@@ -3872,7 +4101,7 @@ fn render_session_stats_overlay(
     frame.render_widget(paragraph, chunks[0]);
 
     let hint = Paragraph::new("Keys: arrows/PgUp/PgDn=scroll  Esc/Backspace=close")
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme::DIM))
         .alignment(Alignment::Center);
     frame.render_widget(hint, chunks[1]);
 }
@@ -3968,7 +4197,9 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from("Navigation"),
         Line::from("  - Arrows: move selection"),
+        Line::from("  - Shift+Arrows: extend selection range"),
         Line::from("  - PgUp/PgDn: page up/down"),
+        Line::from("  - Shift+PgUp/PgDn: extend selection range"),
         Line::from("  - Mouse: wheel scrolls, left click selects/focuses"),
         Line::from("  - Enter: open"),
         Line::from("  - Esc: back / close windows"),
@@ -3998,7 +4229,9 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         ),
         Line::from("  - Tasks: type to filter, Enter opens, Ctrl+Enter spawns"),
         Line::from("  - Tasks: n creates, Del deletes, Shift+Tab switches engine"),
-        Line::from("  - New Task: Ctrl+S saves, Ctrl+I inserts image, Ctrl+P edits project path"),
+        Line::from(
+            "  - New Task: Ctrl+S saves, Ctrl+I inserts image, Ctrl+V pastes image, Ctrl+P edits project path",
+        ),
         Line::from("  - Task Detail: Ctrl+Enter spawns, Shift+Tab switches engine, Del deletes"),
         Line::from("  - Projects/Sessions: ● indicates online"),
         Line::from("  - Session Detail: Tab switches focus (Timeline / Details)"),
@@ -4018,8 +4251,15 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
     let paragraph = Paragraph::new(text).wrap(Wrap { trim: false }).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title("Help (F1 or ? to close)"),
+            .title(Title::from(Span::styled(
+                "Help (F1 or ? to close)",
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )))
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(paragraph, popup);
 }
@@ -4035,8 +4275,15 @@ fn render_delete_confirm_overlay(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
         .padding(Padding::horizontal(1))
-        .title("Delete Project Logs");
+        .title(Title::from(Span::styled(
+            "Delete Project Logs",
+            Style::default()
+                .fg(theme::ERROR)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -4081,7 +4328,7 @@ fn render_delete_confirm_overlay(
     message.push(Line::from(vec![Span::styled(
         "This deletes log files under the Codex sessions directory only.",
         Style::default()
-            .fg(Color::Yellow)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     )]));
     message.push(Line::from(format!("Sessions dir: {sessions_dir}")));
@@ -4097,7 +4344,7 @@ fn render_delete_confirm_overlay(
     } else {
         Style::default()
     };
-    let delete_base = Style::default().fg(Color::Red);
+    let delete_base = Style::default().fg(theme::ERROR);
     let delete_style = if confirm.selection == DeleteConfirmSelection::Delete {
         delete_base
             .add_modifier(Modifier::REVERSED)
@@ -4115,7 +4362,130 @@ fn render_delete_confirm_overlay(
     frame.render_widget(buttons, chunks[1]);
 
     let hint = Paragraph::new("Keys: ←/→ choose  Enter confirm  Esc/Backspace cancel  y/n")
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme::DIM))
+        .alignment(Alignment::Center);
+    frame.render_widget(hint, chunks[2]);
+}
+
+fn render_delete_projects_confirm_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    model: &AppModel,
+    confirm: &crate::app::DeleteProjectsConfirmDialog,
+) {
+    let popup = centered_rect(72, 44, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
+        .padding(Padding::horizontal(1))
+        .title(Title::from(Span::styled(
+            "Delete Project Logs",
+            Style::default()
+                .fg(theme::ERROR)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let max_line_width = (chunks[0].width as usize).saturating_sub(1);
+    let sessions_dir = model.data.sessions_dir.display().to_string();
+    let sessions_dir = truncate_middle(&sessions_dir, max_line_width);
+
+    let size = format_size(confirm.total_size_bytes, DECIMAL);
+    let projects_word = if confirm.project_count == 1 {
+        "project"
+    } else {
+        "projects"
+    };
+    let sessions_word = if confirm.session_count == 1 {
+        "session"
+    } else {
+        "sessions"
+    };
+
+    let mut message = Vec::new();
+    message.push(Line::from(format!(
+        "Delete session logs for {} {projects_word}?",
+        confirm.project_count
+    )));
+    message.push(Line::from(""));
+    message.push(Line::from(format!(
+        "Projects: {}  ·  Sessions: {} {sessions_word}  ·  Total: {size}",
+        confirm.project_count, confirm.session_count
+    )));
+
+    let mut preview_paths = confirm.project_paths.iter().collect::<Vec<_>>();
+    preview_paths.sort_by_key(|path| path.display().to_string());
+    let preview_limit = 6usize;
+    if !preview_paths.is_empty() {
+        message.push(Line::from(""));
+        message.push(Line::from("Projects:"));
+        for path in preview_paths.iter().take(preview_limit) {
+            let path = truncate_middle(
+                &path.display().to_string(),
+                max_line_width.saturating_sub(4),
+            );
+            message.push(Line::from(format!("  - {path}")));
+        }
+        if preview_paths.len() > preview_limit {
+            message.push(Line::from(format!(
+                "  … and {} more",
+                preview_paths.len().saturating_sub(preview_limit)
+            )));
+        }
+    }
+
+    message.push(Line::from(""));
+    message.push(Line::from(vec![Span::styled(
+        "This deletes log files under the Codex sessions directory only.",
+        Style::default()
+            .fg(theme::ACCENT)
+            .add_modifier(Modifier::BOLD),
+    )]));
+    message.push(Line::from(format!("Sessions dir: {sessions_dir}")));
+    message.push(Line::from("Your project folder is not modified."));
+
+    let paragraph = Paragraph::new(message).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, chunks[0]);
+
+    let cancel_style = if confirm.selection == DeleteConfirmSelection::Cancel {
+        Style::default()
+            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let delete_base = Style::default().fg(theme::ERROR);
+    let delete_style = if confirm.selection == DeleteConfirmSelection::Delete {
+        delete_base
+            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        delete_base.add_modifier(Modifier::BOLD)
+    };
+
+    let buttons = Paragraph::new(Line::from(vec![
+        Span::styled("[ Cancel ]", cancel_style),
+        Span::raw("   "),
+        Span::styled("[ Delete ]", delete_style),
+    ]))
+    .alignment(Alignment::Center);
+    frame.render_widget(buttons, chunks[1]);
+
+    let hint = Paragraph::new("Keys: ←/→ choose  Enter confirm  Esc/Backspace cancel  y/n")
+        .style(Style::default().fg(theme::DIM))
         .alignment(Alignment::Center);
     frame.render_widget(hint, chunks[2]);
 }
@@ -4131,8 +4501,15 @@ fn render_delete_session_confirm_overlay(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
         .padding(Padding::horizontal(1))
-        .title("Delete Session Log");
+        .title(Title::from(Span::styled(
+            "Delete Session Log",
+            Style::default()
+                .fg(theme::ERROR)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -4188,7 +4565,7 @@ fn render_delete_session_confirm_overlay(
     message.push(Line::from(vec![Span::styled(
         "This deletes 1 log file under the Codex sessions directory only.",
         Style::default()
-            .fg(Color::Yellow)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     )]));
     message.push(Line::from(format!("Sessions dir: {sessions_dir}")));
@@ -4204,7 +4581,7 @@ fn render_delete_session_confirm_overlay(
     } else {
         Style::default()
     };
-    let delete_base = Style::default().fg(Color::Red);
+    let delete_base = Style::default().fg(theme::ERROR);
     let delete_style = if confirm.selection == DeleteConfirmSelection::Delete {
         delete_base
             .add_modifier(Modifier::REVERSED)
@@ -4222,7 +4599,136 @@ fn render_delete_session_confirm_overlay(
     frame.render_widget(buttons, chunks[1]);
 
     let hint = Paragraph::new("Keys: ←/→ choose  Enter confirm  Esc/Backspace cancel  y/n")
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme::DIM))
+        .alignment(Alignment::Center);
+    frame.render_widget(hint, chunks[2]);
+}
+
+fn render_delete_sessions_confirm_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    model: &AppModel,
+    confirm: &crate::app::DeleteSessionsConfirmDialog,
+) {
+    let popup = centered_rect(72, 44, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
+        .padding(Padding::horizontal(1))
+        .title(Title::from(Span::styled(
+            "Delete Session Logs",
+            Style::default()
+                .fg(theme::ERROR)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let max_line_width = (chunks[0].width as usize).saturating_sub(1);
+    let sessions_dir = model.data.sessions_dir.display().to_string();
+    let sessions_dir = truncate_middle(&sessions_dir, max_line_width);
+    let project_path = confirm.project_path.display().to_string();
+    let project_path = truncate_middle(&project_path, max_line_width);
+
+    let size = format_size(confirm.total_size_bytes, DECIMAL);
+    let sessions_word = if confirm.session_count == 1 {
+        "session"
+    } else {
+        "sessions"
+    };
+
+    let mut message = Vec::new();
+    message.push(Line::from(vec![
+        Span::raw("Delete "),
+        Span::styled(
+            format!("{} {sessions_word}", confirm.session_count),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" from "),
+        Span::styled(
+            format!("\"{}\"", confirm.project_name),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("?"),
+    ]));
+    message.push(Line::from(""));
+    message.push(Line::from(format!("Total: {size}")));
+    message.push(Line::from(format!("Project path: {project_path}")));
+
+    let preview_limit = 6usize;
+    if !confirm.log_paths.is_empty() {
+        message.push(Line::from(""));
+        message.push(Line::from("Log files:"));
+        for log_path in confirm.log_paths.iter().take(preview_limit) {
+            let file = log_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| log_path.display().to_string());
+            let file = truncate_middle(&file, max_line_width.saturating_sub(4));
+            message.push(Line::from(format!("  - {file}")));
+        }
+        if confirm.log_paths.len() > preview_limit {
+            message.push(Line::from(format!(
+                "  … and {} more",
+                confirm.log_paths.len().saturating_sub(preview_limit)
+            )));
+        }
+    }
+
+    message.push(Line::from(""));
+    message.push(Line::from(vec![Span::styled(
+        format!(
+            "This deletes {} log file(s) under the Codex sessions directory only.",
+            confirm.session_count
+        ),
+        Style::default()
+            .fg(theme::ACCENT)
+            .add_modifier(Modifier::BOLD),
+    )]));
+    message.push(Line::from(format!("Sessions dir: {sessions_dir}")));
+    message.push(Line::from("Your project folder is not modified."));
+
+    let paragraph = Paragraph::new(message).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, chunks[0]);
+
+    let cancel_style = if confirm.selection == DeleteConfirmSelection::Cancel {
+        Style::default()
+            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let delete_base = Style::default().fg(theme::ERROR);
+    let delete_style = if confirm.selection == DeleteConfirmSelection::Delete {
+        delete_base
+            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        delete_base.add_modifier(Modifier::BOLD)
+    };
+
+    let buttons = Paragraph::new(Line::from(vec![
+        Span::styled("[ Cancel ]", cancel_style),
+        Span::raw("   "),
+        Span::styled("[ Delete ]", delete_style),
+    ]))
+    .alignment(Alignment::Center);
+    frame.render_widget(buttons, chunks[1]);
+
+    let hint = Paragraph::new("Keys: ←/→ choose  Enter confirm  Esc/Backspace cancel  y/n")
+        .style(Style::default().fg(theme::DIM))
         .alignment(Alignment::Center);
     frame.render_widget(hint, chunks[2]);
 }
@@ -4238,8 +4744,15 @@ fn render_delete_task_confirm_overlay(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
         .padding(Padding::horizontal(1))
-        .title("Delete Task");
+        .title(Title::from(Span::styled(
+            "Delete Task",
+            Style::default()
+                .fg(theme::ERROR)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -4273,7 +4786,7 @@ fn render_delete_task_confirm_overlay(
     message.push(Line::from(vec![Span::styled(
         "This removes the task from the local tasks database.",
         Style::default()
-            .fg(Color::Yellow)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     )]));
 
@@ -4287,7 +4800,7 @@ fn render_delete_task_confirm_overlay(
     } else {
         Style::default()
     };
-    let delete_base = Style::default().fg(Color::Red);
+    let delete_base = Style::default().fg(theme::ERROR);
     let delete_style = if confirm.selection == DeleteConfirmSelection::Delete {
         delete_base
             .add_modifier(Modifier::REVERSED)
@@ -4305,7 +4818,127 @@ fn render_delete_task_confirm_overlay(
     frame.render_widget(buttons, chunks[1]);
 
     let hint = Paragraph::new("Keys: ←/→ choose  Enter confirm  Esc/Backspace cancel  y/n")
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme::DIM))
+        .alignment(Alignment::Center);
+    frame.render_widget(hint, chunks[2]);
+}
+
+fn render_delete_tasks_confirm_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    _model: &AppModel,
+    confirm: &crate::app::DeleteTasksConfirmDialog,
+) {
+    let popup = centered_rect(72, 44, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
+        .padding(Padding::horizontal(1))
+        .title(Title::from(Span::styled(
+            "Delete Tasks",
+            Style::default()
+                .fg(theme::ERROR)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let max_line_width = (chunks[0].width as usize).saturating_sub(1);
+    let tasks_word = if confirm.task_count == 1 {
+        "task"
+    } else {
+        "tasks"
+    };
+
+    let mut message = Vec::new();
+    message.push(Line::from(vec![
+        Span::raw("Delete "),
+        Span::styled(
+            format!("{} {tasks_word}", confirm.task_count),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("?"),
+    ]));
+
+    let mut titles = confirm
+        .task_ids
+        .iter()
+        .filter_map(|task_id| {
+            confirm
+                .return_to_tasks
+                .tasks
+                .iter()
+                .find(|task| &task.id == task_id)
+                .map(|task| task.title.clone())
+        })
+        .collect::<Vec<_>>();
+    titles.sort();
+
+    let preview_limit = 8usize;
+    if !titles.is_empty() {
+        message.push(Line::from(""));
+        message.push(Line::from("Tasks:"));
+        for title in titles.iter().take(preview_limit) {
+            let title = truncate_end(title, max_line_width.saturating_sub(4));
+            message.push(Line::from(format!("  - {title}")));
+        }
+        if titles.len() > preview_limit {
+            message.push(Line::from(format!(
+                "  … and {} more",
+                titles.len().saturating_sub(preview_limit)
+            )));
+        }
+    }
+
+    message.push(Line::from(""));
+    message.push(Line::from(vec![Span::styled(
+        "This removes tasks from the local tasks database.",
+        Style::default()
+            .fg(theme::ACCENT)
+            .add_modifier(Modifier::BOLD),
+    )]));
+
+    let paragraph = Paragraph::new(message).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, chunks[0]);
+
+    let cancel_style = if confirm.selection == DeleteConfirmSelection::Cancel {
+        Style::default()
+            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let delete_base = Style::default().fg(theme::ERROR);
+    let delete_style = if confirm.selection == DeleteConfirmSelection::Delete {
+        delete_base
+            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        delete_base.add_modifier(Modifier::BOLD)
+    };
+
+    let buttons = Paragraph::new(Line::from(vec![
+        Span::styled("[ Cancel ]", cancel_style),
+        Span::raw("   "),
+        Span::styled("[ Delete ]", delete_style),
+    ]))
+    .alignment(Alignment::Center);
+    frame.render_widget(buttons, chunks[1]);
+
+    let hint = Paragraph::new("Keys: ←/→ choose  Enter confirm  Esc/Backspace cancel  y/n")
+        .style(Style::default().fg(theme::DIM))
         .alignment(Alignment::Center);
     frame.render_widget(hint, chunks[2]);
 }

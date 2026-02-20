@@ -22,6 +22,18 @@ impl SessionsDirWatcher {
     }
 }
 
+#[derive(Debug)]
+pub struct SessionFileWatcher {
+    _watcher: RecommendedWatcher,
+    rx: Receiver<WatchSignal>,
+}
+
+impl SessionFileWatcher {
+    pub fn try_recv(&self) -> Option<WatchSignal> {
+        self.rx.try_recv().ok()
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum WatchSessionsDirError {
     #[error("watch error: {0}")]
@@ -53,6 +65,37 @@ pub fn watch_sessions_dir(path: &Path) -> Result<SessionsDirWatcher, WatchSessio
     })
 }
 
+#[derive(Debug, Error)]
+pub enum WatchSessionFileError {
+    #[error("watch error: {0}")]
+    Notify(#[from] notify::Error),
+}
+
+pub fn watch_session_file(path: &Path) -> Result<SessionFileWatcher, WatchSessionFileError> {
+    let (tx, rx) = channel::<WatchSignal>();
+
+    let mut watcher = RecommendedWatcher::new(
+        move |res: notify::Result<notify::Event>| match res {
+            Ok(event) => {
+                if should_trigger_session_reload(&event) {
+                    let _ = tx.send(WatchSignal::Changed);
+                }
+            }
+            Err(error) => {
+                let _ = tx.send(WatchSignal::Error(error.to_string()));
+            }
+        },
+        Config::default(),
+    )?;
+
+    watcher.watch(path, RecursiveMode::NonRecursive)?;
+
+    Ok(SessionFileWatcher {
+        _watcher: watcher,
+        rx,
+    })
+}
+
 fn should_trigger_rescan(event: &notify::Event) -> bool {
     if matches!(event.kind, EventKind::Access(_)) {
         return false;
@@ -65,4 +108,8 @@ fn should_trigger_rescan(event: &notify::Event) -> bool {
         .paths
         .iter()
         .any(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+}
+
+fn should_trigger_session_reload(event: &notify::Event) -> bool {
+    !matches!(event.kind, EventKind::Access(_))
 }

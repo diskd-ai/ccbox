@@ -17,7 +17,7 @@ use crate::infra::{
     fork_codex_session_log_at_cut, load_last_assistant_output, load_session_index,
     load_session_timeline, read_from_offset, read_tail, refresh_session_index,
     resolve_ccbox_state_dir, resolve_sessions_dir, save_session_index, scan_sessions_dir,
-    watch_sessions_dir,
+    watch_session_file, watch_sessions_dir,
 };
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -59,6 +59,19 @@ struct SessionIndexRequest {
 #[derive(Clone, Debug)]
 enum SessionIndexSignal {
     Updated { index: Arc<SessionIndex> },
+}
+
+#[derive(Debug)]
+enum SessionDetailTimelineSignal {
+    Loaded {
+        log_path: PathBuf,
+        result: Result<crate::domain::SessionTimeline, String>,
+    },
+}
+
+#[derive(Debug)]
+enum SessionsDirScanSignal {
+    Scanned { data: crate::app::AppData },
 }
 
 fn main() {
@@ -197,11 +210,23 @@ fn run(
             None
         }
     };
+    let (sessions_scan_tx, sessions_scan_rx) = channel::<SessionsDirScanSignal>();
+    let mut sessions_scan_in_flight = false;
     let debounce = Duration::from_millis(900);
     let max_delay = Duration::from_secs(5);
     let mut pending_rescan = false;
     let mut first_change_at: Option<Instant> = None;
     let mut rescan_deadline: Option<Instant> = None;
+
+    let (session_detail_tx, session_detail_rx) = channel::<SessionDetailTimelineSignal>();
+    let session_detail_debounce = Duration::from_millis(450);
+    let session_detail_max_delay = Duration::from_secs(3);
+    let mut session_detail_watcher: Option<crate::infra::SessionFileWatcher> = None;
+    let mut session_detail_watcher_path: Option<PathBuf> = None;
+    let mut pending_session_detail_reload = false;
+    let mut session_detail_first_change_at: Option<Instant> = None;
+    let mut session_detail_reload_deadline: Option<Instant> = None;
+    let mut session_detail_reload_in_flight_for: Option<PathBuf> = None;
 
     let (process_tx, process_rx) = channel::<ProcessSignal>();
     let mut process_manager = match ProcessManager::new(model.data.sessions_dir.clone(), process_tx)
@@ -225,6 +250,24 @@ fn run(
             }
         }
 
+        while let Ok(signal) = sessions_scan_rx.try_recv() {
+            match signal {
+                SessionsDirScanSignal::Scanned { data } => {
+                    sessions_scan_in_flight = false;
+                    let prior_notice = model.notice.clone();
+                    let updated = model.with_data(data);
+                    let notice = if prior_notice.is_some() {
+                        prior_notice
+                    } else {
+                        Some("Auto-rescanned.".to_string())
+                    };
+                    *model = updated.with_notice(notice);
+                    refresh_open_project_stats_overlay(model);
+                    request_session_index_refresh_optional(&session_index_req_tx, model);
+                }
+            }
+        }
+
         if let Some(rx) = &session_index_rx {
             while let Ok(signal) = rx.try_recv() {
                 match signal {
@@ -232,6 +275,87 @@ fn run(
                         model.session_index = index;
                         refresh_open_project_stats_overlay(model);
                     }
+                }
+            }
+        }
+
+        while let Ok(signal) = session_detail_rx.try_recv() {
+            match signal {
+                SessionDetailTimelineSignal::Loaded { log_path, result } => {
+                    if session_detail_reload_in_flight_for
+                        .as_ref()
+                        .is_some_and(|path| path == &log_path)
+                    {
+                        session_detail_reload_in_flight_for = None;
+                    }
+
+                    match result {
+                        Ok(timeline) => {
+                            refresh_open_session_detail(model, &log_path, timeline);
+                        }
+                        Err(error) => {
+                            if is_session_detail_open_for_log_path(model, &log_path) {
+                                *model = model.with_notice(Some(format!(
+                                    "Failed to refresh session timeline: {error}"
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ensure_session_detail_watcher(
+            model,
+            &mut session_detail_watcher,
+            &mut session_detail_watcher_path,
+            &mut pending_session_detail_reload,
+            &mut session_detail_first_change_at,
+            &mut session_detail_reload_deadline,
+            &mut session_detail_reload_in_flight_for,
+        );
+
+        if let Some(watcher) = &session_detail_watcher {
+            while let Some(signal) = watcher.try_recv() {
+                match signal {
+                    WatchSignal::Changed => {
+                        let now = Instant::now();
+                        pending_session_detail_reload = true;
+                        session_detail_reload_deadline = Some(now + session_detail_debounce);
+                        if session_detail_first_change_at.is_none() {
+                            session_detail_first_change_at = Some(now);
+                        }
+                    }
+                    WatchSignal::Error(message) => {
+                        if session_detail_watcher_path.is_some() {
+                            *model = model
+                                .with_notice(Some(format!("Session watcher error: {message}")));
+                        }
+                    }
+                }
+            }
+        }
+
+        if pending_session_detail_reload && session_detail_reload_in_flight_for.is_none() {
+            let now = Instant::now();
+            let due_by_debounce = session_detail_reload_deadline.is_some_and(|due| now >= due);
+            let due_by_max_delay = session_detail_first_change_at
+                .is_some_and(|first| now.duration_since(first) >= session_detail_max_delay);
+            if due_by_debounce || due_by_max_delay {
+                pending_session_detail_reload = false;
+                session_detail_first_change_at = None;
+                session_detail_reload_deadline = None;
+
+                if let Some(log_path) = session_detail_watcher_path.clone() {
+                    session_detail_reload_in_flight_for = Some(log_path.clone());
+                    let tx = session_detail_tx.clone();
+                    std::thread::spawn(move || {
+                        let result = match load_session_timeline(&log_path) {
+                            Ok(timeline) => Ok(timeline),
+                            Err(error) => Err(error.to_string()),
+                        };
+                        let _ = tx.send(SessionDetailTimelineSignal::Loaded { log_path, result });
+                    });
                 }
             }
         }
@@ -266,7 +390,7 @@ fn run(
 
         refresh_process_output_view(model);
 
-        if pending_rescan {
+        if pending_rescan && !sessions_scan_in_flight {
             let now = Instant::now();
             let due_by_debounce = rescan_deadline.is_some_and(|due| now >= due);
             let due_by_max_delay =
@@ -275,29 +399,26 @@ fn run(
                 pending_rescan = false;
                 first_change_at = None;
                 rescan_deadline = None;
-
+                sessions_scan_in_flight = true;
                 let sessions_dir = model.data.sessions_dir.clone();
-                let new_data = match scan_sessions_dir(&sessions_dir) {
-                    Ok(output) => app::build_index_from_sessions(
-                        sessions_dir.clone(),
-                        output.sessions,
-                        output.warnings,
-                    ),
-                    Err(error) => app::AppData::from_load_error(sessions_dir, error.to_string()),
-                };
-                let prior_notice = model.notice.clone();
-                let updated = model.with_data(new_data);
-                let notice = if prior_notice.is_some() {
-                    prior_notice
-                } else {
-                    Some("Auto-rescanned.".to_string())
-                };
-                *model = updated.with_notice(notice);
-                refresh_open_project_stats_overlay(model);
-                request_session_index_refresh_optional(&session_index_req_tx, model);
+                let tx = sessions_scan_tx.clone();
+                std::thread::spawn(move || {
+                    let new_data = match scan_sessions_dir(&sessions_dir) {
+                        Ok(output) => app::build_index_from_sessions(
+                            sessions_dir.clone(),
+                            output.sessions,
+                            output.warnings,
+                        ),
+                        Err(error) => {
+                            app::AppData::from_load_error(sessions_dir, error.to_string())
+                        }
+                    };
+                    let _ = tx.send(SessionsDirScanSignal::Scanned { data: new_data });
+                });
             }
         }
 
+        ui::clamp_scroll_state(model);
         terminal.draw(|frame| ui::render(frame, model))?;
 
         if event::poll(Duration::from_millis(200))? {
@@ -544,6 +665,63 @@ fn run(
                                 crate::app::View::Tasks(from_tasks.with_reloaded_tasks(summaries));
                             *model = model.with_notice(Some("Deleted task.".to_string()));
                         }
+                        AppCommand::DeleteTasksBatch {
+                            from_tasks,
+                            task_ids,
+                        } => {
+                            let store = match TaskStore::open_default() {
+                                Ok(store) => store,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to open tasks DB: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            let mut deleted = 0usize;
+                            let mut not_found = 0usize;
+                            let mut failed = 0usize;
+                            for task_id in &task_ids {
+                                match store.delete_task(task_id) {
+                                    Ok(true) => deleted = deleted.saturating_add(1),
+                                    Ok(false) => not_found = not_found.saturating_add(1),
+                                    Err(_) => failed = failed.saturating_add(1),
+                                }
+                            }
+
+                            let tasks = match store.list_tasks() {
+                                Ok(tasks) => tasks,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to load tasks: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+                            let summaries = tasks
+                                .into_iter()
+                                .map(|entry| crate::app::TaskSummaryRow {
+                                    id: entry.task.id,
+                                    title: derive_task_title(&entry.task.body),
+                                    project_path: entry.task.project_path,
+                                    updated_at: entry.task.updated_at,
+                                    image_count: entry.image_count,
+                                })
+                                .collect::<Vec<_>>();
+
+                            model.view =
+                                crate::app::View::Tasks(from_tasks.with_reloaded_tasks(summaries));
+
+                            let mut message = format!("Deleted {deleted} task(s).");
+                            if not_found > 0 {
+                                message.push_str(&format!(" {not_found} not found."));
+                            }
+                            if failed > 0 {
+                                message.push_str(&format!(" {failed} failed."));
+                            }
+                            *model = model.with_notice(Some(message));
+                        }
                         AppCommand::SpawnTask { engine, task_id } => {
                             let Some(manager) = process_manager.as_mut() else {
                                 *model = model
@@ -657,6 +835,44 @@ fn run(
                                 model.notice = Some(format!("Inserted [Image {ordinal}]."));
                             }
                         }
+                        AppCommand::TaskCreatePasteImageFromClipboard => {
+                            if !matches!(&model.view, crate::app::View::TaskCreate(_)) {
+                                *model = model.with_notice(Some(
+                                    "Open New Task to paste an image from the clipboard."
+                                        .to_string(),
+                                ));
+                                continue;
+                            }
+
+                            let path =
+                                match crate::infra::paste_clipboard_image_to_task_images_dir() {
+                                    Ok(path) => path,
+                                    Err(crate::infra::PasteClipboardImageError::NoImage) => {
+                                        *model = model.with_notice(Some(
+                                            "Clipboard has no image to paste.".to_string(),
+                                        ));
+                                        continue;
+                                    }
+                                    Err(error) => {
+                                        *model = model.with_notice(Some(format!(
+                                            "Failed to paste clipboard image: {error}"
+                                        )));
+                                        continue;
+                                    }
+                                };
+
+                            let path = std::fs::canonicalize(&path).unwrap_or(path);
+                            if let crate::app::View::TaskCreate(task_create) = &mut model.view {
+                                let ordinal =
+                                    u32::try_from(task_create.image_paths.len().saturating_add(1))
+                                        .unwrap_or(u32::MAX);
+                                task_create.image_paths.push(path);
+                                task_create.editor.insert_str(&format!("[Image {ordinal}]"));
+                                task_create.overlay = None;
+                                model.notice =
+                                    Some(format!("Inserted [Image {ordinal}] from clipboard."));
+                            }
+                        }
                         AppCommand::OpenSessionDetail {
                             from_sessions,
                             session,
@@ -767,9 +983,97 @@ fn run(
                             }
                             *model = model.with_notice(Some(message));
                         }
+                        AppCommand::DeleteProjectLogsBatch { project_paths } => {
+                            let mut log_paths = Vec::new();
+                            for project_path in &project_paths {
+                                let Some(project) = model
+                                    .data
+                                    .projects
+                                    .iter()
+                                    .find(|project| &project.project_path == project_path)
+                                else {
+                                    continue;
+                                };
+                                log_paths.extend(
+                                    project
+                                        .sessions
+                                        .iter()
+                                        .map(|session| session.log_path.clone()),
+                                );
+                            }
+
+                            let outcome = delete_session_logs(&model.data.sessions_dir, &log_paths);
+
+                            pending_rescan = false;
+                            first_change_at = None;
+                            rescan_deadline = None;
+
+                            let sessions_dir = model.data.sessions_dir.clone();
+                            let new_data = match scan_sessions_dir(&sessions_dir) {
+                                Ok(output) => app::build_index_from_sessions(
+                                    sessions_dir.clone(),
+                                    output.sessions,
+                                    output.warnings,
+                                ),
+                                Err(error) => {
+                                    app::AppData::from_load_error(sessions_dir, error.to_string())
+                                }
+                            };
+                            *model = model.with_data(new_data);
+                            refresh_open_project_stats_overlay(model);
+                            request_session_index_refresh_optional(&session_index_req_tx, model);
+
+                            let mut message =
+                                format!("Deleted {} session log(s).", outcome.deleted);
+                            if outcome.failed > 0 {
+                                message.push_str(&format!(" {} failed.", outcome.failed));
+                            }
+                            if outcome.skipped_outside_sessions_dir > 0 {
+                                message.push_str(&format!(
+                                    " {} skipped (outside sessions dir).",
+                                    outcome.skipped_outside_sessions_dir
+                                ));
+                            }
+                            *model = model.with_notice(Some(message));
+                        }
                         AppCommand::DeleteSessionLog { log_path } => {
                             let outcome =
                                 delete_session_logs(&model.data.sessions_dir, &[log_path.clone()]);
+
+                            pending_rescan = false;
+                            first_change_at = None;
+                            rescan_deadline = None;
+
+                            let sessions_dir = model.data.sessions_dir.clone();
+                            let new_data = match scan_sessions_dir(&sessions_dir) {
+                                Ok(output) => app::build_index_from_sessions(
+                                    sessions_dir.clone(),
+                                    output.sessions,
+                                    output.warnings,
+                                ),
+                                Err(error) => {
+                                    app::AppData::from_load_error(sessions_dir, error.to_string())
+                                }
+                            };
+                            *model = model.with_data(new_data);
+                            refresh_open_project_stats_overlay(model);
+                            request_session_index_refresh_optional(&session_index_req_tx, model);
+
+                            let mut message =
+                                format!("Deleted {} session log(s).", outcome.deleted);
+                            if outcome.failed > 0 {
+                                message.push_str(&format!(" {} failed.", outcome.failed));
+                            }
+                            if outcome.skipped_outside_sessions_dir > 0 {
+                                message.push_str(&format!(
+                                    " {} skipped (outside sessions dir).",
+                                    outcome.skipped_outside_sessions_dir
+                                ));
+                            }
+                            *model = model.with_notice(Some(message));
+                        }
+                        AppCommand::DeleteSessionLogsBatch { log_paths } => {
+                            let outcome = delete_session_logs(&model.data.sessions_dir, &log_paths);
 
                             pending_rescan = false;
                             first_change_at = None;
@@ -1506,6 +1810,86 @@ fn build_session_summary_from_log_path(
         file_size_bytes,
         file_modified,
     ))
+}
+
+fn ensure_session_detail_watcher(
+    model: &mut AppModel,
+    watcher: &mut Option<crate::infra::SessionFileWatcher>,
+    watcher_path: &mut Option<PathBuf>,
+    pending_reload: &mut bool,
+    first_change_at: &mut Option<Instant>,
+    reload_deadline: &mut Option<Instant>,
+    in_flight_for: &mut Option<PathBuf>,
+) {
+    let desired_path = match &model.view {
+        crate::app::View::SessionDetail(detail_view) => Some(detail_view.session.log_path.clone()),
+        _ => None,
+    };
+
+    if desired_path.as_ref() == watcher_path.as_ref() {
+        return;
+    }
+
+    *watcher = None;
+    *watcher_path = desired_path.clone();
+    *pending_reload = false;
+    *first_change_at = None;
+    *reload_deadline = None;
+    *in_flight_for = None;
+
+    let Some(path) = desired_path else {
+        return;
+    };
+
+    match watch_session_file(&path) {
+        Ok(next) => {
+            *watcher = Some(next);
+        }
+        Err(error) => {
+            *watcher = None;
+            *model = model.with_notice(Some(format!("Live session updates disabled: {error}")));
+        }
+    }
+}
+
+fn is_session_detail_open_for_log_path(model: &AppModel, log_path: &std::path::Path) -> bool {
+    match &model.view {
+        crate::app::View::SessionDetail(detail_view) => detail_view.session.log_path == log_path,
+        _ => false,
+    }
+}
+
+fn refresh_open_session_detail(
+    model: &mut AppModel,
+    log_path: &std::path::Path,
+    timeline: crate::domain::SessionTimeline,
+) {
+    let crate::app::View::SessionDetail(detail_view) = &mut model.view else {
+        return;
+    };
+    if detail_view.session.log_path != log_path {
+        return;
+    }
+
+    detail_view.items = timeline.items;
+    detail_view.turn_contexts = timeline.turn_contexts;
+    detail_view.warnings = timeline.warnings;
+    detail_view.truncated = timeline.truncated;
+
+    detail_view.last_output = detail_view
+        .items
+        .iter()
+        .rev()
+        .find(|item| item.kind == crate::domain::TimelineItemKind::Assistant)
+        .map(|item| item.detail.clone());
+
+    if detail_view.items.is_empty() {
+        detail_view.selected = 0;
+    } else {
+        detail_view.selected = detail_view
+            .selected
+            .min(detail_view.items.len().saturating_sub(1));
+    }
 }
 
 fn is_supported_image_path(path: &std::path::Path) -> bool {

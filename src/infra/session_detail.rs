@@ -104,6 +104,9 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
     let mut current_turn_id: Option<String> = None;
     let mut last_emitted_turn_id: Option<String> = None;
     let mut items: Vec<TimelineItem> = Vec::new();
+    let mut last_user_prompt: Option<String> = None;
+    let mut pending_aborted_prompt: Option<String> = None;
+    let mut last_user_prompt_by_turn: BTreeMap<String, String> = BTreeMap::new();
     let mut last_token_count_fingerprint: Option<String> = None;
     let mut last_token_count_index: Option<usize> = None;
 
@@ -127,6 +130,14 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
             }
         };
 
+        if value.get("type").and_then(|v| v.as_str()) == Some("event_msg") {
+            let payload = value.get("payload").unwrap_or(&serde_json::Value::Null);
+            let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if payload_type == "turn_aborted" {
+                pending_aborted_prompt = last_user_prompt.clone();
+            }
+        }
+
         match parse_log_value(&value, current_turn_id.as_deref()) {
             ParsedLogLine::TurnContext(ctx) => {
                 current_turn_id = Some(ctx.turn_id.clone());
@@ -139,6 +150,7 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
             ParsedLogLine::Item(mut item) => {
                 item.source_line_no = Some(line_no);
                 let is_token_count = item.kind == TimelineItemKind::TokenCount;
+                let is_user_prompt = item.kind == TimelineItemKind::User;
 
                 if is_token_count {
                     // Codex emits many duplicate token_count events (often identical 2–3x).
@@ -155,6 +167,27 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
                     }
                     last_token_count_fingerprint = Some(fingerprint);
                     last_token_count_index = None;
+                }
+
+                if is_user_prompt {
+                    let detail = item.detail.trim_end();
+                    if let Some(turn_id) = item.turn_id.as_deref() {
+                        if last_user_prompt_by_turn
+                            .get(turn_id)
+                            .is_some_and(|prev| prev.trim_end() == detail)
+                        {
+                            pending_aborted_prompt = None;
+                            continue;
+                        }
+                    }
+                    if pending_aborted_prompt
+                        .as_deref()
+                        .is_some_and(|prev| prev.trim_end() == detail)
+                    {
+                        pending_aborted_prompt = None;
+                        continue;
+                    }
+                    pending_aborted_prompt = None;
                 }
 
                 if let Some(turn_id) = item.turn_id.as_deref() {
@@ -176,6 +209,15 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
                     break;
                 }
                 items.push(item);
+                if is_user_prompt {
+                    if let Some(last) = items.last() {
+                        let detail = last.detail.trim_end().to_string();
+                        last_user_prompt = Some(detail.clone());
+                        if let Some(turn_id) = last.turn_id.as_deref() {
+                            last_user_prompt_by_turn.insert(turn_id.to_string(), detail);
+                        }
+                    }
+                }
 
                 if is_token_count {
                     last_token_count_index = Some(items.len().saturating_sub(1));
@@ -302,6 +344,155 @@ mod tests {
             .expect("token count");
 
         assert!(first_token_index > tool_out_index);
+    }
+
+    #[test]
+    fn dedupes_retried_user_prompt_after_turn_aborted() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+
+        let lines = [
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:00.000Z",
+                "type": "turn_context",
+                "payload": { "turn_id": "t1" }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:01.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "hello" }]
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:02.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "ok" }]
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:03.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "<turn_aborted>\nThe user interrupted.\n</turn_aborted>"
+                    }]
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:03.500Z",
+                "type": "event_msg",
+                "payload": { "type": "turn_aborted", "turn_id": "t1" }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:04.000Z",
+                "type": "event_msg",
+                "payload": { "type": "task_started", "turn_id": "t2" }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:05.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "hello" }]
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:06.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "ok again" }]
+                }
+            }),
+        ];
+
+        let body = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, body).expect("write");
+
+        let timeline = load_session_timeline(&path).expect("load");
+        let user_items = timeline
+            .items
+            .iter()
+            .filter(|item| item.kind == TimelineItemKind::User)
+            .collect::<Vec<_>>();
+
+        assert_eq!(user_items.len(), 1);
+        assert_eq!(user_items[0].summary, "hello");
+        assert_eq!(user_items[0].source_line_no, Some(2));
+    }
+
+    #[test]
+    fn dedupes_duplicate_user_prompt_within_same_turn() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+
+        let lines = [
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:00.000Z",
+                "type": "turn_context",
+                "payload": { "turn_id": "t1" }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:01.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "hello" }]
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:01.100Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "hello" }]
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-02-18T22:00:02.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "ok" }]
+                }
+            }),
+        ];
+
+        let body = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, body).expect("write");
+
+        let timeline = load_session_timeline(&path).expect("load");
+        let user_items = timeline
+            .items
+            .iter()
+            .filter(|item| item.kind == TimelineItemKind::User)
+            .collect::<Vec<_>>();
+
+        assert_eq!(user_items.len(), 1);
+        assert_eq!(user_items[0].summary, "hello");
+        assert_eq!(user_items[0].source_line_no, Some(2));
     }
 
     #[test]
