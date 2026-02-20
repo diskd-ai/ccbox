@@ -16,6 +16,42 @@ require_cmd() {
   fi
 }
 
+make_tmp_dir() {
+  local base="${1:-""}"
+  if [[ -n "${base}" ]]; then
+    mkdir -p "${base}"
+    TMPDIR="${base}" mktemp -d
+    return 0
+  fi
+
+  mktemp -d
+}
+
+download_file() {
+  local url out
+  url="$1"
+  out="$2"
+
+  if curl -fsSL -o "${out}" "${url}"; then
+    return 0
+  fi
+
+  local code out_dir
+  code="$?"
+  out_dir="${out%/*}"
+  if [[ "${out_dir}" == "${out}" ]]; then
+    out_dir="."
+  fi
+
+  echo "error: download failed: ${url}" >&2
+  if [[ "${code}" -eq 23 ]]; then
+    echo "hint: curl write error. Check disk space and write permissions for: ${out_dir}" >&2
+    echo "hint: you can set CCBOX_TMP_DIR or TMPDIR to a directory with free space." >&2
+  fi
+
+  return "${code}"
+}
+
 install_binary() {
   local src dst
   src="$1"
@@ -156,12 +192,26 @@ main() {
   base_url="https://github.com/${REPO}/releases/download/${TAG}"
   asset="${BIN_NAME}-${version}-${target}.tar.gz"
 
-  TMP_DIR="$(mktemp -d)"
+  TMP_DIR="$(make_tmp_dir "${CCBOX_TMP_DIR:-""}")"
   trap 'rm -rf "${TMP_DIR}"' EXIT
 
   echo "downloading: ${asset}" >&2
-  curl -fsSL -o "${TMP_DIR}/${asset}" "${base_url}/${asset}"
-  curl -fsSL -o "${TMP_DIR}/${asset}.sha256" "${base_url}/${asset}.sha256"
+  if download_file "${base_url}/${asset}" "${TMP_DIR}/${asset}" && download_file "${base_url}/${asset}.sha256" "${TMP_DIR}/${asset}.sha256"; then
+    :
+  else
+    local code="$?"
+    if [[ "${code}" -eq 23 && -z "${CCBOX_TMP_DIR:-""}" ]]; then
+      local fallback_base
+      fallback_base="${XDG_CACHE_HOME:-"${HOME}/.cache"}/ccbox/tmp"
+      echo "note: retrying download from a fallback temp dir: ${fallback_base}" >&2
+      rm -rf "${TMP_DIR}"
+      TMP_DIR="$(make_tmp_dir "${fallback_base}")"
+      download_file "${base_url}/${asset}" "${TMP_DIR}/${asset}"
+      download_file "${base_url}/${asset}.sha256" "${TMP_DIR}/${asset}.sha256"
+    else
+      exit 1
+    fi
+  fi
 
   verify_sha256 "${TMP_DIR}" "${asset}"
 
@@ -178,4 +228,3 @@ main() {
 }
 
 main "$@"
-
