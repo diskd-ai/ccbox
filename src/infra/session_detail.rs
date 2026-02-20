@@ -38,6 +38,10 @@ pub fn load_last_assistant_output(
         .into());
     }
 
+    if is_claude_log_path(path) {
+        return Ok(super::claude::load_claude_last_assistant_output(path)?);
+    }
+
     let file = File::open(path)?;
     let reader = BufReader::new(file);
 
@@ -91,6 +95,10 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
             format!("path is a directory: {}", path.display()),
         )
         .into());
+    }
+
+    if is_claude_log_path(path) {
+        return Ok(super::claude::load_claude_session_timeline(path)?);
     }
 
     let file = File::open(path)?;
@@ -251,6 +259,10 @@ fn make_turn_item(turn_id: &str, source_line_no: Option<u64>) -> TimelineItem {
 fn short_id(value: &str) -> String {
     let max = 8usize;
     value.chars().take(max).collect()
+}
+
+fn is_claude_log_path(path: &Path) -> bool {
+    crate::domain::has_path_component(path, ".claude")
 }
 
 #[cfg(test)]

@@ -1,19 +1,23 @@
+mod claude;
 mod clipboard;
 mod codex_fork;
 mod delete;
 mod processes;
 mod scan;
+mod scan_all;
 mod session_detail;
 mod session_index;
 mod tasks;
 mod update;
 mod watch;
 
+pub use claude::*;
 pub use clipboard::*;
 pub use codex_fork::*;
 pub use delete::*;
 pub use processes::*;
 pub use scan::*;
+pub use scan_all::*;
 pub use session_detail::*;
 pub use session_index::*;
 pub use tasks::*;

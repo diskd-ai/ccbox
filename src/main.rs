@@ -16,7 +16,7 @@ use crate::infra::{
     SessionIndex, TaskStore, WatchSignal, WriteTtyError, delete_session_logs,
     fork_codex_session_log_at_cut, load_last_assistant_output, load_session_index,
     load_session_timeline, read_from_offset, read_tail, refresh_session_index,
-    resolve_ccbox_state_dir, resolve_sessions_dir, save_session_index, scan_sessions_dir,
+    resolve_ccbox_state_dir, resolve_sessions_dir, save_session_index, scan_all_sessions,
     watch_session_file, watch_sessions_dir,
 };
 use crossterm::event::{
@@ -71,7 +71,10 @@ enum SessionDetailTimelineSignal {
 
 #[derive(Debug)]
 enum SessionsDirScanSignal {
-    Scanned { data: crate::app::AppData },
+    Scanned {
+        data: crate::app::AppData,
+        notice: Option<String>,
+    },
 }
 
 fn main() {
@@ -116,7 +119,7 @@ fn run_main() -> Result<(), MainError> {
 
 fn print_help() {
     let text = format!(
-        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}                          Start the TUI\n  {name} projects                 List discovered projects\n  {name} sessions [project-path]  List sessions (defaults to current folder)\n  {name} history [log|project]    Print timeline (defaults to latest for current folder)\n  {name} update                   Self-update from GitHub Releases (macOS/Linux)\n  {name} --help | --version\n\nSESSIONS FLAGS:\n  --limit N   Max sessions to print (default: 10)\n  --offset N  Skip first N sessions (default: 0)\n  --size      Include file size bytes column\n\nHISTORY FLAGS:\n  --limit N   Max timeline items to print (default: 10)\n  --offset N  Skip first N timeline items (default: 0)\n  --full      Include full details (tool outputs, long messages)\n  --size      Print stats to stderr (bytes + item counts)\n\nOUTPUT:\n  projects: project_name<TAB>project_path<TAB>session_count\n  sessions: started_at<TAB>session_id<TAB>title<TAB>log_path  (with --size adds file_size_bytes before log_path)\n\nENV:\n  CODEX_SESSIONS_DIR  Override sessions dir (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n",
+        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}                          Start the TUI\n  {name} projects                 List discovered projects\n  {name} sessions [project-path]  List sessions (defaults to current folder)\n  {name} history [log|project]    Print timeline (defaults to latest for current folder)\n  {name} update                   Self-update from GitHub Releases (macOS/Linux)\n  {name} --help | --version\n\nSESSIONS FLAGS:\n  --limit N   Max sessions to print (default: 10)\n  --offset N  Skip first N sessions (default: 0)\n  --size      Include file size bytes column\n\nHISTORY FLAGS:\n  --limit N   Max timeline items to print (default: 10)\n  --offset N  Skip first N timeline items (default: 0)\n  --full      Include full details (tool outputs, long messages)\n  --size      Print stats to stderr (bytes + item counts)\n\nOUTPUT:\n  projects: project_name<TAB>project_path<TAB>session_count\n  sessions: started_at<TAB>session_id<TAB>title<TAB>log_path  (with --size adds file_size_bytes before log_path)\n\nENV:\n  CODEX_SESSIONS_DIR    Override Codex sessions dir (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n  CLAUDE_PROJECTS_DIR   Override Claude projects dir (default: ~/.claude/projects)\n",
         name = env!("CARGO_PKG_NAME")
     );
     let mut out = io::stdout().lock();
@@ -125,14 +128,10 @@ fn print_help() {
 
 fn run_tui() -> Result<(), crate::app::AppError> {
     let sessions_dir = resolve_sessions_dir()?;
-    let initial_data = match scan_sessions_dir(&sessions_dir) {
-        Ok(output) => {
-            app::build_index_from_sessions(sessions_dir.clone(), output.sessions, output.warnings)
-        }
-        Err(error) => app::AppData::from_load_error(sessions_dir.clone(), error.to_string()),
-    };
-
-    let mut model = AppModel::new(initial_data);
+    let scan = scan_all_sessions(&sessions_dir);
+    let initial_data =
+        app::build_index_from_sessions(sessions_dir.clone(), scan.sessions, scan.warnings);
+    let mut model = AppModel::new(initial_data).with_notice(scan.notice);
     let mut terminal = setup_terminal()?;
     if let Ok((width, height)) = terminal_size() {
         model = model.with_terminal_size(width, height);
@@ -252,16 +251,14 @@ fn run(
 
         while let Ok(signal) = sessions_scan_rx.try_recv() {
             match signal {
-                SessionsDirScanSignal::Scanned { data } => {
+                SessionsDirScanSignal::Scanned { data, notice } => {
                     sessions_scan_in_flight = false;
                     let prior_notice = model.notice.clone();
                     let updated = model.with_data(data);
-                    let notice = if prior_notice.is_some() {
-                        prior_notice
-                    } else {
-                        Some("Auto-rescanned.".to_string())
-                    };
-                    *model = updated.with_notice(notice);
+                    let next_notice = prior_notice
+                        .or(notice)
+                        .or_else(|| Some("Auto-rescanned.".to_string()));
+                    *model = updated.with_notice(next_notice);
                     refresh_open_project_stats_overlay(model);
                     request_session_index_refresh_optional(&session_index_req_tx, model);
                 }
@@ -403,17 +400,16 @@ fn run(
                 let sessions_dir = model.data.sessions_dir.clone();
                 let tx = sessions_scan_tx.clone();
                 std::thread::spawn(move || {
-                    let new_data = match scan_sessions_dir(&sessions_dir) {
-                        Ok(output) => app::build_index_from_sessions(
-                            sessions_dir.clone(),
-                            output.sessions,
-                            output.warnings,
-                        ),
-                        Err(error) => {
-                            app::AppData::from_load_error(sessions_dir, error.to_string())
-                        }
-                    };
-                    let _ = tx.send(SessionsDirScanSignal::Scanned { data: new_data });
+                    let output = scan_all_sessions(&sessions_dir);
+                    let new_data = app::build_index_from_sessions(
+                        sessions_dir.clone(),
+                        output.sessions,
+                        output.warnings,
+                    );
+                    let _ = tx.send(SessionsDirScanSignal::Scanned {
+                        data: new_data,
+                        notice: output.notice,
+                    });
                 });
             }
         }
@@ -431,17 +427,14 @@ fn run(
                         AppCommand::Quit => return Ok(()),
                         AppCommand::Rescan => {
                             let sessions_dir = model.data.sessions_dir.clone();
-                            let new_data = match scan_sessions_dir(&sessions_dir) {
-                                Ok(output) => app::build_index_from_sessions(
-                                    sessions_dir.clone(),
-                                    output.sessions,
-                                    output.warnings,
-                                ),
-                                Err(error) => {
-                                    app::AppData::from_load_error(sessions_dir, error.to_string())
-                                }
-                            };
-                            *model = model.with_data(new_data);
+                            let output = scan_all_sessions(&sessions_dir);
+                            let new_data = app::build_index_from_sessions(
+                                sessions_dir.clone(),
+                                output.sessions,
+                                output.warnings,
+                            );
+                            let notice = model.notice.clone().or(output.notice);
+                            *model = model.with_data(new_data).with_notice(notice);
                             refresh_open_project_stats_overlay(model);
                             request_session_index_refresh_optional(&session_index_req_tx, model);
                         }
@@ -956,16 +949,12 @@ fn run(
                             rescan_deadline = None;
 
                             let sessions_dir = model.data.sessions_dir.clone();
-                            let new_data = match scan_sessions_dir(&sessions_dir) {
-                                Ok(output) => app::build_index_from_sessions(
-                                    sessions_dir.clone(),
-                                    output.sessions,
-                                    output.warnings,
-                                ),
-                                Err(error) => {
-                                    app::AppData::from_load_error(sessions_dir, error.to_string())
-                                }
-                            };
+                            let output = scan_all_sessions(&sessions_dir);
+                            let new_data = app::build_index_from_sessions(
+                                sessions_dir.clone(),
+                                output.sessions,
+                                output.warnings,
+                            );
                             *model = model.with_data(new_data);
                             refresh_open_project_stats_overlay(model);
                             request_session_index_refresh_optional(&session_index_req_tx, model);
@@ -1009,16 +998,12 @@ fn run(
                             rescan_deadline = None;
 
                             let sessions_dir = model.data.sessions_dir.clone();
-                            let new_data = match scan_sessions_dir(&sessions_dir) {
-                                Ok(output) => app::build_index_from_sessions(
-                                    sessions_dir.clone(),
-                                    output.sessions,
-                                    output.warnings,
-                                ),
-                                Err(error) => {
-                                    app::AppData::from_load_error(sessions_dir, error.to_string())
-                                }
-                            };
+                            let output = scan_all_sessions(&sessions_dir);
+                            let new_data = app::build_index_from_sessions(
+                                sessions_dir.clone(),
+                                output.sessions,
+                                output.warnings,
+                            );
                             *model = model.with_data(new_data);
                             refresh_open_project_stats_overlay(model);
                             request_session_index_refresh_optional(&session_index_req_tx, model);
@@ -1045,16 +1030,12 @@ fn run(
                             rescan_deadline = None;
 
                             let sessions_dir = model.data.sessions_dir.clone();
-                            let new_data = match scan_sessions_dir(&sessions_dir) {
-                                Ok(output) => app::build_index_from_sessions(
-                                    sessions_dir.clone(),
-                                    output.sessions,
-                                    output.warnings,
-                                ),
-                                Err(error) => {
-                                    app::AppData::from_load_error(sessions_dir, error.to_string())
-                                }
-                            };
+                            let output = scan_all_sessions(&sessions_dir);
+                            let new_data = app::build_index_from_sessions(
+                                sessions_dir.clone(),
+                                output.sessions,
+                                output.warnings,
+                            );
                             *model = model.with_data(new_data);
                             refresh_open_project_stats_overlay(model);
                             request_session_index_refresh_optional(&session_index_req_tx, model);
@@ -1080,16 +1061,12 @@ fn run(
                             rescan_deadline = None;
 
                             let sessions_dir = model.data.sessions_dir.clone();
-                            let new_data = match scan_sessions_dir(&sessions_dir) {
-                                Ok(output) => app::build_index_from_sessions(
-                                    sessions_dir.clone(),
-                                    output.sessions,
-                                    output.warnings,
-                                ),
-                                Err(error) => {
-                                    app::AppData::from_load_error(sessions_dir, error.to_string())
-                                }
-                            };
+                            let output = scan_all_sessions(&sessions_dir);
+                            let new_data = app::build_index_from_sessions(
+                                sessions_dir.clone(),
+                                output.sessions,
+                                output.warnings,
+                            );
                             *model = model.with_data(new_data);
                             refresh_open_project_stats_overlay(model);
                             request_session_index_refresh_optional(&session_index_req_tx, model);

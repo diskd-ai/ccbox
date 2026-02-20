@@ -5,7 +5,7 @@ checkboxes.
 
 ## Multi-agent
 
-- [ ] Claude sessions browser (projects/sessions/timeline) from `~/.claude` (separate view)
+- [x] Claude sessions browser (separate module; projects/sessions/timeline) from `~/.claude/projects`
 - [ ] Gemini sessions browser + spawning
 - [ ] Normalize session model across engines (Codex/Claude/Gemini)
 

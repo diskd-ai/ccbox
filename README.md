@@ -11,7 +11,7 @@ Prototype features:
 - New Session prompt editor (`n`) that spawns Codex/Claude in `Pipes` or `TTY` mode
 - Processes screen (`P`) for stdout/stderr/log viewing + killing spawned agents
 - Attach/detach to spawned `TTY` sessions (`a` to attach, `Ctrl-]` to detach)
-- Auto-rescans when the sessions directory changes (file watcher)
+- Auto-rescans when the Codex sessions directory changes (file watcher)
 
 ## Install
 
@@ -40,7 +40,7 @@ cargo install --path .
 ![Projects screen showing the menu bar, searchable projects list, and session-count/last-modified columns.](assets/projects.png)
 
 What’s happening / features:
-- Browse projects discovered under your sessions directory.
+- Browse projects discovered from your local Codex/Claude session logs.
 - Type to filter (matching text is highlighted); `Esc` clears.
 - Shift+Arrows multi-select; `Del` deletes selected (with confirmation).
 - Project table includes path, session count, and last modified time; `●` indicates a recently modified (“online”) project.

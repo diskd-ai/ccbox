@@ -445,7 +445,7 @@ fn first_non_empty_line(text: &str) -> Option<String> {
         .map(|line| line.to_string())
 }
 
-fn parse_rfc3339_to_unix_ms(value: &str) -> Option<i64> {
+pub(crate) fn parse_rfc3339_to_unix_ms(value: &str) -> Option<i64> {
     let timestamp = OffsetDateTime::parse(value, &Rfc3339).ok()?;
     let ms: i128 = timestamp.unix_timestamp_nanos() / 1_000_000;
     i64::try_from(ms).ok()

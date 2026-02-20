@@ -9,6 +9,17 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.13] - 2026-02-20
+
+### Changes
+
+- TUI/CLI: index and browse Claude Code sessions from `~/.claude/projects` (Engine filter: Claude).
+- CLI: add `CLAUDE_PROJECTS_DIR` to override the Claude projects directory.
+
+### Fixes
+
+- TUI: fork/resume now shows a clear notice for non-Codex sessions.
+
 ## [0.1.12] - 2026-02-20
 
 ### Changes

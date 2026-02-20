@@ -12,7 +12,6 @@ use crate::domain::{
 use crate::infra::{ScanWarningCount, SessionIndex};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -68,15 +67,6 @@ impl AppData {
             projects: sessions,
             warnings,
             load_error: None,
-        }
-    }
-
-    pub fn from_load_error(sessions_dir: PathBuf, error: String) -> Self {
-        Self {
-            sessions_dir,
-            projects: Vec::new(),
-            warnings: ScanWarningCount::from(0usize),
-            load_error: Some(error),
         }
     }
 }
@@ -3259,15 +3249,10 @@ fn open_delete_confirm(model: &mut AppModel, view: &ProjectsView) {
 }
 
 fn infer_engine_from_log_path(log_path: &Path) -> EngineFilter {
-    let has_component = |name: &str| {
-        log_path
-            .components()
-            .any(|c| c.as_os_str() == OsStr::new(name))
-    };
-    if has_component(".claude") {
+    if crate::domain::has_path_component(log_path, ".claude") {
         return EngineFilter::Claude;
     }
-    if has_component(".gemini") {
+    if crate::domain::has_path_component(log_path, ".gemini") {
         return EngineFilter::Gemini;
     }
     EngineFilter::Codex
@@ -4507,6 +4492,13 @@ fn update_session_detail(
             }
         }
         KeyCode::Char('f') | KeyCode::Char('F') => {
+            if infer_engine_from_log_path(&view.session.log_path) != EngineFilter::Codex {
+                model.notice =
+                    Some("Fork/resume is only available for Codex sessions.".to_string());
+                model.view = View::SessionDetail(view);
+                return (model, AppCommand::None);
+            }
+
             if view.items.is_empty() {
                 model.notice = Some("No timeline items.".to_string());
                 model.view = View::SessionDetail(view);

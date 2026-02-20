@@ -1,5 +1,5 @@
 use crate::domain::{ProjectSummary, TimelineItem, TimelineItemKind, index_projects};
-use crate::infra::{LoadSessionTimelineError, ScanError, load_session_timeline, scan_sessions_dir};
+use crate::infra::{LoadSessionTimelineError, load_session_timeline, scan_all_sessions};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -183,11 +183,8 @@ pub fn parse_invocation(args: &[String]) -> Result<CliInvocation, CliParseError>
 
 #[derive(Debug, Error)]
 pub enum CliRunError {
-    #[error("sessions directory does not exist: {0}\nHint: set CODEX_SESSIONS_DIR to override.")]
-    SessionsDirMissing(String),
-
     #[error(transparent)]
-    Scan(#[from] ScanError),
+    Scan(#[from] crate::infra::ScanError),
 
     #[error(transparent)]
     LoadTimeline(#[from] LoadSessionTimelineError),
@@ -216,7 +213,7 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
 
     match command {
         CliCommand::Projects => {
-            let (projects, warnings) = load_projects(sessions_dir)?;
+            let (projects, warnings, notice) = load_projects(sessions_dir)?;
             for project in projects {
                 let line = format!(
                     "{}\t{}\t{}",
@@ -225,6 +222,11 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
                     project.sessions.len()
                 );
                 if !write_line(&mut out, &line)? {
+                    return Ok(());
+                }
+            }
+            if let Some(notice) = notice {
+                if !write_line(&mut err, &notice)? {
                     return Ok(());
                 }
             }
@@ -239,7 +241,7 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
             limit,
             size,
         } => {
-            let (projects, warnings) = load_projects(sessions_dir)?;
+            let (projects, warnings, notice) = load_projects(sessions_dir)?;
             let project = select_project(projects, project_path)?;
 
             for session in project.sessions.iter().skip(offset).take(limit) {
@@ -265,6 +267,11 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
                     return Ok(());
                 }
             }
+            if let Some(notice) = notice {
+                if !write_line(&mut err, &notice)? {
+                    return Ok(());
+                }
+            }
             if warnings > 0 && !write_line(&mut err, &format!("warnings: {warnings}"))? {
                 return Ok(());
             }
@@ -279,7 +286,12 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
         } => {
             let log_path = match log_path {
                 Some(path) if fs::metadata(&path).is_ok_and(|meta| meta.is_dir()) => {
-                    let (projects, warnings) = load_projects(sessions_dir)?;
+                    let (projects, warnings, notice) = load_projects(sessions_dir)?;
+                    if let Some(notice) = notice {
+                        if !write_line(&mut err, &notice)? {
+                            return Ok(());
+                        }
+                    }
                     if warnings > 0 && !write_line(&mut err, &format!("warnings: {warnings}"))? {
                         return Ok(());
                     }
@@ -296,7 +308,12 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
                 }
                 Some(path) => path,
                 None => {
-                    let (projects, warnings) = load_projects(sessions_dir)?;
+                    let (projects, warnings, notice) = load_projects(sessions_dir)?;
+                    if let Some(notice) = notice {
+                        if !write_line(&mut err, &notice)? {
+                            return Ok(());
+                        }
+                    }
                     if warnings > 0 && !write_line(&mut err, &format!("warnings: {warnings}"))? {
                         return Ok(());
                     }
@@ -359,12 +376,15 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
     }
 }
 
-fn load_projects(sessions_dir: &Path) -> Result<(Vec<ProjectSummary>, usize), CliRunError> {
-    match scan_sessions_dir(sessions_dir) {
-        Ok(output) => Ok((index_projects(&output.sessions), output.warnings.get())),
-        Err(ScanError::SessionsDirMissing(path)) => Err(CliRunError::SessionsDirMissing(path)),
-        Err(error) => Err(CliRunError::Scan(error)),
-    }
+fn load_projects(
+    sessions_dir: &Path,
+) -> Result<(Vec<ProjectSummary>, usize, Option<String>), CliRunError> {
+    let output = scan_all_sessions(sessions_dir);
+    Ok((
+        index_projects(&output.sessions),
+        output.warnings.get(),
+        output.notice,
+    ))
 }
 
 fn select_project(
