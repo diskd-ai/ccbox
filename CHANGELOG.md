@@ -6,6 +6,12 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Changes
 
+### Fixes
+
+## [0.1.15] - 2026-02-20
+
+### Changes
+
 - TUI/CLI: index and browse OpenCode sessions from `opencode.db` (Engine filter: OpenCode).
 - CLI/TUI: add `CCBOX_OPENCODE_DB_PATH` to override the OpenCode DB location.
 - TUI: rename sessions (`Ctrl+E`) and move sessions to another project (`Ctrl+P`) using local overrides in `~/.ccbox/`.
