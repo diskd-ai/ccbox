@@ -72,11 +72,14 @@ resolve_tag() {
   fi
 
   local tag
-  tag="$(
+  if ! tag="$(
     curl -fsSL -o - "https://api.github.com/repos/${REPO}/releases/latest" \
-      | grep -m1 '"tag_name"' \
-      | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/'
-  )"
+      | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' \
+      | sed -n '1p'
+  )"; then
+    echo "error: failed to resolve latest release tag" >&2
+    exit 1
+  fi
 
   if [[ -z "${tag}" ]]; then
     echo "error: failed to resolve latest release tag" >&2
