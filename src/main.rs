@@ -17,11 +17,12 @@ use crate::infra::{
     fork_codex_session_log_at_cut, load_last_assistant_output, load_session_index,
     load_session_timeline, read_from_offset, read_tail, refresh_session_index,
     resolve_ccbox_state_dir, resolve_sessions_dir, save_session_index, scan_all_sessions,
-    watch_session_file, watch_sessions_dir,
+    set_session_alias, set_session_project, watch_session_file, watch_sessions_dir,
 };
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::size as terminal_size;
 use crossterm::terminal::{
@@ -147,9 +148,11 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>, app::AppError>
     stdout.execute(EnterAlternateScreen)?;
     let _ = stdout.execute(EnableBracketedPaste);
     let _ = stdout.execute(EnableMouseCapture);
-    let _ = stdout.execute(PushKeyboardEnhancementFlags(
-        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
-    ));
+    let keyboard_flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+    let _ = stdout.execute(PushKeyboardEnhancementFlags(keyboard_flags));
     let backend = CrosstermBackend::new(stdout);
     Ok(Terminal::new(backend)?)
 }
@@ -420,6 +423,9 @@ fn run(
         if event::poll(Duration::from_millis(200))? {
             match event::read()? {
                 Event::Key(key) => {
+                    if key.kind == KeyEventKind::Release {
+                        continue;
+                    }
                     let (next, command) = app::update(model.clone(), AppEvent::Key(key));
                     *model = next;
                     match command {
@@ -869,24 +875,49 @@ fn run(
                         AppCommand::OpenSessionDetail {
                             from_sessions,
                             session,
-                        } => match load_session_timeline(&session.log_path) {
-                            Ok(timeline) => {
-                                *model = model.open_session_detail(
-                                    from_sessions,
-                                    session,
-                                    timeline.items,
-                                    timeline.turn_contexts,
-                                    timeline.warnings,
-                                    timeline.truncated,
-                                );
+                        } => {
+                            let mut session = session;
+                            let log_path = match crate::infra::prepare_session_log_path(&session) {
+                                Ok(path) => path,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to prepare session log: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+                            session.log_path = log_path.clone();
+
+                            match load_session_timeline(&log_path) {
+                                Ok(timeline) => {
+                                    *model = model.open_session_detail(
+                                        from_sessions,
+                                        session,
+                                        timeline.items,
+                                        timeline.turn_contexts,
+                                        timeline.warnings,
+                                        timeline.truncated,
+                                    );
+                                }
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to load session: {error}"
+                                    )));
+                                }
                             }
-                            Err(error) => {
-                                *model = model
-                                    .with_notice(Some(format!("Failed to load session: {error}")));
-                            }
-                        },
+                        }
                         AppCommand::OpenSessionStats { session } => {
-                            match load_session_timeline(&session.log_path) {
+                            let log_path = match crate::infra::prepare_session_log_path(&session) {
+                                Ok(path) => path,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to prepare stats: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            match load_session_timeline(&log_path) {
                                 Ok(timeline) => {
                                     let stats =
                                         compute_session_stats(&session.meta, &timeline.items);
@@ -907,7 +938,17 @@ fn run(
                             }
                         }
                         AppCommand::OpenSessionResultPreview { session } => {
-                            match load_last_assistant_output(&session.log_path) {
+                            let log_path = match crate::infra::prepare_session_log_path(&session) {
+                                Ok(path) => path,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Failed to prepare result: {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            match load_last_assistant_output(&log_path) {
                                 Ok(result) => {
                                     let output = result.output.unwrap_or_else(|| {
                                         "(No assistant output found.)".to_string()
@@ -925,6 +966,164 @@ fn run(
                                     )));
                                 }
                             }
+                        }
+                        AppCommand::RenameSession { session, title } => {
+                            let state_dir = match resolve_ccbox_state_dir() {
+                                Ok(dir) => dir,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Rename disabled (state dir unavailable): {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            if let Err(error) = set_session_alias(
+                                &state_dir,
+                                session.engine,
+                                &session.meta.id,
+                                &title,
+                            ) {
+                                *model = model.with_notice(Some(format!(
+                                    "Failed to rename session: {error}"
+                                )));
+                                continue;
+                            }
+
+                            let fallback_title = title
+                                .is_empty()
+                                .then(|| infer_session_title_from_log(&session))
+                                .flatten();
+                            let cleared_needs_rescan = title.is_empty() && fallback_title.is_none();
+
+                            let mut projects = model.data.projects.clone();
+                            let mut updated = false;
+                            for project in &mut projects {
+                                for entry in &mut project.sessions {
+                                    if entry.log_path != session.log_path {
+                                        continue;
+                                    }
+
+                                    if title.is_empty() {
+                                        if let Some(value) = fallback_title.as_ref() {
+                                            entry.title = value.clone();
+                                        }
+                                    } else {
+                                        entry.title = title.clone();
+                                    }
+                                    updated = true;
+                                }
+                            }
+
+                            let new_data = crate::app::AppData {
+                                sessions_dir: model.data.sessions_dir.clone(),
+                                projects,
+                                warnings: model.data.warnings,
+                                load_error: model.data.load_error.clone(),
+                            };
+                            *model = model.with_data(new_data);
+
+                            let notice = if !updated {
+                                "Session not found.".to_string()
+                            } else if title.is_empty() {
+                                if cleared_needs_rescan {
+                                    "Cleared session rename. Title will refresh on rescan."
+                                        .to_string()
+                                } else {
+                                    "Cleared session rename.".to_string()
+                                }
+                            } else {
+                                "Renamed session.".to_string()
+                            };
+                            *model = model.with_notice(Some(notice));
+                        }
+                        AppCommand::MoveSessionProject {
+                            session,
+                            project_path,
+                        } => {
+                            let state_dir = match resolve_ccbox_state_dir() {
+                                Ok(dir) => dir,
+                                Err(error) => {
+                                    *model = model.with_notice(Some(format!(
+                                        "Move disabled (state dir unavailable): {error}"
+                                    )));
+                                    continue;
+                                }
+                            };
+
+                            let raw_path = project_path
+                                .as_ref()
+                                .map(|path| path.display().to_string())
+                                .unwrap_or_default();
+                            if let Err(error) = set_session_project(
+                                &state_dir,
+                                session.engine,
+                                &session.meta.id,
+                                &raw_path,
+                            ) {
+                                *model = model
+                                    .with_notice(Some(format!("Failed to move session: {error}")));
+                                continue;
+                            }
+
+                            let fallback_project = project_path
+                                .is_none()
+                                .then(|| infer_session_project_from_log(&session))
+                                .flatten();
+                            let cleared_needs_rescan =
+                                project_path.is_none() && fallback_project.is_none();
+
+                            if let crate::app::View::SessionDetail(detail_view) = &mut model.view {
+                                if detail_view.session.log_path == session.log_path {
+                                    if let Some(cwd) =
+                                        project_path.clone().or_else(|| fallback_project.clone())
+                                    {
+                                        detail_view.session.meta.cwd = cwd.clone();
+                                        detail_view.from_sessions.project_path = cwd;
+                                    }
+                                }
+                            }
+
+                            let mut sessions = model
+                                .data
+                                .projects
+                                .iter()
+                                .flat_map(|project| project.sessions.iter().cloned())
+                                .collect::<Vec<_>>();
+
+                            let next_cwd =
+                                project_path.clone().or_else(|| fallback_project.clone());
+                            let mut updated = false;
+                            for entry in &mut sessions {
+                                if entry.log_path != session.log_path {
+                                    continue;
+                                }
+                                if let Some(cwd) = next_cwd.clone() {
+                                    entry.meta.cwd = cwd;
+                                }
+                                updated = true;
+                            }
+
+                            let new_data = crate::app::build_index_from_sessions(
+                                model.data.sessions_dir.clone(),
+                                sessions,
+                                model.data.warnings,
+                            );
+                            *model = model.with_data(new_data);
+
+                            let notice = if !updated {
+                                "Session not found.".to_string()
+                            } else if project_path.is_none() {
+                                if cleared_needs_rescan {
+                                    "Cleared project override. Project will refresh on rescan."
+                                        .to_string()
+                                } else {
+                                    "Cleared project override.".to_string()
+                                }
+                            } else {
+                                "Moved session.".to_string()
+                            };
+                            *model = model.with_notice(Some(notice));
                         }
                         AppCommand::DeleteProjectLogs { project_path } => {
                             let Some(project) = model
@@ -1788,6 +1987,157 @@ fn build_session_summary_from_log_path(
         file_modified,
         crate::domain::SessionEngine::Codex,
     ))
+}
+
+fn infer_session_title_from_log(session: &crate::domain::SessionSummary) -> Option<String> {
+    match session.engine {
+        crate::domain::SessionEngine::Codex => infer_codex_session_title(&session.log_path),
+        crate::domain::SessionEngine::Claude => infer_claude_session_title(&session.log_path),
+        crate::domain::SessionEngine::Gemini => infer_gemini_session_title(&session.log_path),
+        crate::domain::SessionEngine::OpenCode => None,
+    }
+}
+
+fn infer_codex_session_title(log_path: &std::path::Path) -> Option<String> {
+    use std::io::BufRead;
+
+    const MAX_TITLE_SCAN_LINES: usize = 250;
+
+    let file = std::fs::File::open(log_path).ok()?;
+    let mut reader = std::io::BufReader::new(file);
+
+    let mut first_line = String::new();
+    let bytes = reader.read_line(&mut first_line).ok()?;
+    if bytes == 0 {
+        return None;
+    }
+
+    for _ in 0..MAX_TITLE_SCAN_LINES {
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line).ok()?;
+        if bytes == 0 {
+            break;
+        }
+        let Ok(Some(text)) = crate::domain::parse_user_message_text(line.trim_end()) else {
+            continue;
+        };
+        if crate::domain::is_metadata_prompt(&text) {
+            continue;
+        }
+        if let Some(title) = crate::domain::derive_title_from_user_text(&text) {
+            return Some(title);
+        }
+    }
+
+    None
+}
+
+fn infer_claude_session_title(log_path: &std::path::Path) -> Option<String> {
+    use std::io::BufRead;
+
+    const MAX_TITLE_SCAN_LINES: usize = 250;
+    const MAX_TITLE_SCAN_BYTES: usize = 200_000;
+
+    let file = std::fs::File::open(log_path).ok()?;
+    let mut reader = std::io::BufReader::new(file);
+
+    let mut bytes_read = 0usize;
+    for _ in 0..MAX_TITLE_SCAN_LINES {
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line).ok()?;
+        if bytes == 0 {
+            break;
+        }
+        bytes_read = bytes_read.saturating_add(bytes);
+        if bytes_read > MAX_TITLE_SCAN_BYTES {
+            break;
+        }
+
+        let value: serde_json::Value = match serde_json::from_str(line.trim_end()) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let Some(text) = crate::domain::parse_claude_user_message_text(&value) else {
+            continue;
+        };
+        if crate::domain::is_metadata_prompt(&text) {
+            continue;
+        }
+        if let Some(title) = crate::domain::derive_title_from_user_text(&text) {
+            return Some(title);
+        }
+    }
+
+    None
+}
+
+fn infer_gemini_session_title(log_path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(log_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    crate::domain::infer_gemini_title_from_session(&value)
+}
+
+fn infer_session_project_from_log(session: &crate::domain::SessionSummary) -> Option<PathBuf> {
+    match session.engine {
+        crate::domain::SessionEngine::Codex => infer_codex_session_project(&session.log_path),
+        crate::domain::SessionEngine::Claude => infer_claude_session_project(&session.log_path),
+        crate::domain::SessionEngine::Gemini => infer_gemini_session_project(&session.log_path),
+        crate::domain::SessionEngine::OpenCode => None,
+    }
+}
+
+fn infer_codex_session_project(log_path: &std::path::Path) -> Option<PathBuf> {
+    use std::io::BufRead;
+
+    let file = std::fs::File::open(log_path).ok()?;
+    let mut reader = std::io::BufReader::new(file);
+
+    let mut first_line = String::new();
+    let bytes = reader.read_line(&mut first_line).ok()?;
+    if bytes == 0 {
+        return None;
+    }
+
+    let meta = parse_session_meta_line(first_line.trim_end()).ok()?;
+    Some(meta.cwd)
+}
+
+fn infer_claude_session_project(log_path: &std::path::Path) -> Option<PathBuf> {
+    use std::io::BufRead;
+
+    const MAX_SCAN_LINES: usize = 250;
+    const MAX_SCAN_BYTES: usize = 200_000;
+
+    let file = std::fs::File::open(log_path).ok()?;
+    let mut reader = std::io::BufReader::new(file);
+
+    let mut bytes_read = 0usize;
+    for _ in 0..MAX_SCAN_LINES {
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line).ok()?;
+        if bytes == 0 {
+            break;
+        }
+        bytes_read = bytes_read.saturating_add(bytes);
+        if bytes_read > MAX_SCAN_BYTES {
+            break;
+        }
+
+        let value: serde_json::Value = match serde_json::from_str(line.trim_end()) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let hint = crate::domain::extract_claude_session_meta_hint(&value);
+        if let Some(cwd) = hint.cwd {
+            return Some(cwd);
+        }
+    }
+
+    None
+}
+
+fn infer_gemini_session_project(log_path: &std::path::Path) -> Option<PathBuf> {
+    log_path.parent()?.parent().map(|path| path.to_path_buf())
 }
 
 fn ensure_session_detail_watcher(

@@ -189,6 +189,9 @@ pub enum CliRunError {
     #[error(transparent)]
     LoadTimeline(#[from] LoadSessionTimelineError),
 
+    #[error(transparent)]
+    PrepareSessionLog(#[from] crate::infra::PrepareSessionLogError),
+
     #[error("project not found: {0}\nHint: run `ccbox projects` and copy the full project path.")]
     ProjectNotFound(String),
 
@@ -296,15 +299,12 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
                         return Ok(());
                     }
                     let project = select_project(projects, Some(path))?;
-                    project
-                        .sessions
-                        .first()
-                        .map(|session| session.log_path.clone())
-                        .ok_or_else(|| {
-                            CliRunError::ProjectHasNoSessions(
-                                project.project_path.display().to_string(),
-                            )
-                        })?
+                    let session = project.sessions.first().cloned().ok_or_else(|| {
+                        CliRunError::ProjectHasNoSessions(
+                            project.project_path.display().to_string(),
+                        )
+                    })?;
+                    crate::infra::prepare_session_log_path(&session)?
                 }
                 Some(path) => path,
                 None => {
@@ -318,15 +318,12 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
                         return Ok(());
                     }
                     let project = select_project(projects, None)?;
-                    project
-                        .sessions
-                        .first()
-                        .map(|session| session.log_path.clone())
-                        .ok_or_else(|| {
-                            CliRunError::ProjectHasNoSessions(
-                                project.project_path.display().to_string(),
-                            )
-                        })?
+                    let session = project.sessions.first().cloned().ok_or_else(|| {
+                        CliRunError::ProjectHasNoSessions(
+                            project.project_path.display().to_string(),
+                        )
+                    })?;
+                    crate::infra::prepare_session_log_path(&session)?
                 }
             };
 

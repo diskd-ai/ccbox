@@ -1,8 +1,10 @@
 use crate::domain::SessionSummary;
 use crate::infra::{
-    ResolveClaudeProjectsDirError, ResolveGeminiRootDirError, ScanError, ScanWarningCount,
-    resolve_claude_projects_dir, resolve_gemini_root_dir, scan_claude_projects_dir,
-    scan_gemini_root_dir, scan_sessions_dir,
+    ResolveClaudeProjectsDirError, ResolveGeminiRootDirError, ResolveOpenCodeDbPathError,
+    ScanError, ScanWarningCount, apply_session_aliases, apply_session_projects,
+    load_session_aliases, load_session_projects, resolve_ccbox_state_dir,
+    resolve_claude_projects_dir, resolve_gemini_root_dir, resolve_opencode_db_path,
+    scan_claude_projects_dir, scan_gemini_root_dir, scan_opencode_db, scan_sessions_dir,
 };
 use std::path::Path;
 
@@ -30,12 +32,22 @@ pub fn scan_all_sessions(codex_sessions_dir: &Path) -> MultiEngineScanOutput {
         ),
     };
 
+    let (opencode_db_path, opencode_resolve_notice) = match resolve_opencode_db_path() {
+        Ok(path) => (Some(path), None),
+        Err(ResolveOpenCodeDbPathError::HomeDirNotFound) => (
+            None,
+            Some("OpenCode DB disabled: home directory not found".to_string()),
+        ),
+    };
+
     scan_all_sessions_with_dirs(
         codex_sessions_dir,
         claude_projects_dir.as_deref(),
         claude_resolve_notice,
         gemini_root_dir.as_deref(),
         gemini_resolve_notice,
+        opencode_db_path.as_deref(),
+        opencode_resolve_notice,
     )
 }
 
@@ -45,6 +57,8 @@ fn scan_all_sessions_with_dirs(
     claude_resolve_notice: Option<String>,
     gemini_root_dir: Option<&Path>,
     gemini_resolve_notice: Option<String>,
+    opencode_db_path: Option<&Path>,
+    opencode_resolve_notice: Option<String>,
 ) -> MultiEngineScanOutput {
     let mut sessions: Vec<SessionSummary> = Vec::new();
     let mut warnings = 0usize;
@@ -87,6 +101,37 @@ fn scan_all_sessions_with_dirs(
         sessions.extend(output.sessions);
         if let Some(notice) = output.notice {
             notices.push(notice);
+        }
+    }
+
+    if let Some(notice) = opencode_resolve_notice {
+        notices.push(notice);
+    }
+
+    if let Some(db_path) = opencode_db_path {
+        let output = scan_opencode_db(db_path);
+        warnings += output.warnings.get();
+        sessions.extend(output.sessions);
+        if let Some(notice) = output.notice {
+            notices.push(notice);
+        }
+    }
+
+    if let Ok(state_dir) = resolve_ccbox_state_dir() {
+        match load_session_aliases(&state_dir) {
+            Ok(aliases) => apply_session_aliases(&mut sessions, &aliases),
+            Err(error) => {
+                warnings = warnings.saturating_add(1);
+                notices.push(format!("Failed to load session aliases: {error}"));
+            }
+        }
+
+        match load_session_projects(&state_dir) {
+            Ok(projects) => apply_session_projects(&mut sessions, &projects),
+            Err(error) => {
+                warnings = warnings.saturating_add(1);
+                notices.push(format!("Failed to load session projects: {error}"));
+            }
         }
     }
 
@@ -133,6 +178,8 @@ mod tests {
         let output = scan_all_sessions_with_dirs(
             &codex_sessions_dir,
             Some(&claude_projects),
+            None,
+            None,
             None,
             None,
             None,

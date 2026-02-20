@@ -35,6 +35,7 @@ pub enum EngineFilter {
     Codex,
     Claude,
     Gemini,
+    OpenCode,
 }
 
 impl EngineFilter {
@@ -44,6 +45,7 @@ impl EngineFilter {
             Self::Codex => "Codex",
             Self::Claude => "Claude",
             Self::Gemini => "Gemini",
+            Self::OpenCode => "OpenCode",
         }
     }
 }
@@ -86,6 +88,8 @@ pub struct AppModel {
     pub delete_projects_confirm: Option<DeleteProjectsConfirmDialog>,
     pub delete_session_confirm: Option<DeleteSessionConfirmDialog>,
     pub delete_sessions_confirm: Option<DeleteSessionsConfirmDialog>,
+    pub session_rename: Option<SessionRenameDialog>,
+    pub session_move: Option<SessionMoveDialog>,
     pub delete_task_confirm: Option<DeleteTaskConfirmDialog>,
     pub delete_tasks_confirm: Option<DeleteTasksConfirmDialog>,
     pub session_result_preview: Option<SessionResultPreviewOverlay>,
@@ -115,6 +119,8 @@ impl AppModel {
             delete_projects_confirm: None,
             delete_session_confirm: None,
             delete_sessions_confirm: None,
+            session_rename: None,
+            session_move: None,
             delete_task_confirm: None,
             delete_tasks_confirm: None,
             session_result_preview: None,
@@ -140,6 +146,8 @@ impl AppModel {
                 delete_projects_confirm: self.delete_projects_confirm.clone(),
                 delete_session_confirm: self.delete_session_confirm.clone(),
                 delete_sessions_confirm: self.delete_sessions_confirm.clone(),
+                session_rename: self.session_rename.clone(),
+                session_move: self.session_move.clone(),
                 delete_task_confirm: self.delete_task_confirm.clone(),
                 delete_tasks_confirm: self.delete_tasks_confirm.clone(),
                 session_result_preview: self.session_result_preview.clone(),
@@ -360,6 +368,8 @@ impl AppModel {
             delete_projects_confirm: self.delete_projects_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             delete_sessions_confirm: self.delete_sessions_confirm.clone(),
+            session_rename: self.session_rename.clone(),
+            session_move: self.session_move.clone(),
             delete_task_confirm: self.delete_task_confirm.clone(),
             delete_tasks_confirm: self.delete_tasks_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
@@ -384,6 +394,8 @@ impl AppModel {
             delete_projects_confirm: self.delete_projects_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             delete_sessions_confirm: self.delete_sessions_confirm.clone(),
+            session_rename: self.session_rename.clone(),
+            session_move: self.session_move.clone(),
             delete_task_confirm: self.delete_task_confirm.clone(),
             delete_tasks_confirm: self.delete_tasks_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
@@ -408,6 +420,8 @@ impl AppModel {
             delete_projects_confirm: self.delete_projects_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             delete_sessions_confirm: self.delete_sessions_confirm.clone(),
+            session_rename: self.session_rename.clone(),
+            session_move: self.session_move.clone(),
             delete_task_confirm: self.delete_task_confirm.clone(),
             delete_tasks_confirm: self.delete_tasks_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
@@ -445,6 +459,8 @@ impl AppModel {
             delete_projects_confirm: self.delete_projects_confirm.clone(),
             delete_session_confirm: self.delete_session_confirm.clone(),
             delete_sessions_confirm: self.delete_sessions_confirm.clone(),
+            session_rename: self.session_rename.clone(),
+            session_move: self.session_move.clone(),
             delete_task_confirm: self.delete_task_confirm.clone(),
             delete_tasks_confirm: self.delete_tasks_confirm.clone(),
             session_result_preview: self.session_result_preview.clone(),
@@ -750,7 +766,7 @@ pub const MAIN_MENU_WINDOW_ITEMS: [MainMenuEntry; 13] = [
     },
 ];
 
-pub const MAIN_MENU_ENGINE_ITEMS: [MainMenuEntry; 4] = [
+pub const MAIN_MENU_ENGINE_ITEMS: [MainMenuEntry; 5] = [
     MainMenuEntry {
         label: "All",
         hotkey: "",
@@ -777,6 +793,14 @@ pub const MAIN_MENU_ENGINE_ITEMS: [MainMenuEntry; 4] = [
     },
     MainMenuEntry {
         label: "Gemini",
+        hotkey: "",
+        key: MainMenuKey {
+            code: KeyCode::F(2),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "OpenCode",
         hotkey: "",
         key: MainMenuKey {
             code: KeyCode::F(2),
@@ -820,7 +844,7 @@ pub const MAIN_MENU_PROJECTS_ITEMS: [MainMenuEntry; 4] = [
     },
 ];
 
-pub const MAIN_MENU_SESSIONS_ITEMS: [MainMenuEntry; 6] = [
+pub const MAIN_MENU_SESSIONS_ITEMS: [MainMenuEntry; 8] = [
     MainMenuEntry {
         label: "Open",
         hotkey: "Enter",
@@ -843,6 +867,22 @@ pub const MAIN_MENU_SESSIONS_ITEMS: [MainMenuEntry; 6] = [
         key: MainMenuKey {
             code: KeyCode::F(3),
             modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Rename",
+        hotkey: "Ctrl+E or Cmd+E",
+        key: MainMenuKey {
+            code: KeyCode::Char('e'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Move to Project",
+        hotkey: "Ctrl+P or Cmd+P",
+        key: MainMenuKey {
+            code: KeyCode::Char('p'),
+            modifiers: KeyModifiers::CONTROL,
         },
     },
     MainMenuEntry {
@@ -906,7 +946,7 @@ pub const MAIN_MENU_NEW_SESSION_ITEMS: [MainMenuEntry; 4] = [
     },
 ];
 
-pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 7] = [
+pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 9] = [
     MainMenuEntry {
         label: "Jump Tool -> ToolOut",
         hotkey: "Enter",
@@ -945,6 +985,22 @@ pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 7] = [
         key: MainMenuKey {
             code: KeyCode::F(3),
             modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Rename",
+        hotkey: "Ctrl+E or Cmd+E",
+        key: MainMenuKey {
+            code: KeyCode::Char('e'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Move to Project",
+        hotkey: "Ctrl+P or Cmd+P",
+        key: MainMenuKey {
+            code: KeyCode::Char('p'),
+            modifiers: KeyModifiers::CONTROL,
         },
     },
     MainMenuEntry {
@@ -1333,6 +1389,18 @@ pub struct DeleteSessionsConfirmDialog {
     pub session_count: usize,
     pub total_size_bytes: u64,
     pub selection: DeleteConfirmSelection,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionRenameDialog {
+    pub session: SessionSummary,
+    pub editor: LineEditor,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionMoveDialog {
+    pub session: SessionSummary,
+    pub editor: LineEditor,
 }
 
 #[derive(Clone, Debug)]
@@ -1743,6 +1811,14 @@ pub enum AppCommand {
     OpenSessionResultPreview {
         session: SessionSummary,
     },
+    RenameSession {
+        session: SessionSummary,
+        title: String,
+    },
+    MoveSessionProject {
+        session: SessionSummary,
+        project_path: Option<PathBuf>,
+    },
     DeleteProjectLogs {
         project_path: PathBuf,
     },
@@ -1812,6 +1888,8 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
             || model.delete_sessions_confirm.is_some()
             || model.delete_task_confirm.is_some()
             || model.delete_tasks_confirm.is_some()
+            || model.session_rename.is_some()
+            || model.session_move.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -1990,13 +2068,29 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                 let mut sessions_view =
                     SessionsView::new(project.project_path.clone(), project.sessions.len());
                 apply_session_filter(&project.sessions, &mut sessions_view, model.engine_filter);
-                model.view = View::NewSession(NewSessionView::new(sessions_view));
+                let engine = default_new_session_engine(model.engine_filter, Some(project));
+                let mut new_session_view = NewSessionView::new(sessions_view);
+                new_session_view.engine = engine;
+                model.view = View::NewSession(new_session_view);
             }
             View::Sessions(sessions_view) => {
-                model.view = View::NewSession(NewSessionView::new(sessions_view));
+                let engine = default_new_session_engine(
+                    model.engine_filter,
+                    sessions_view.current_project(&model.data.projects),
+                );
+                let mut new_session_view = NewSessionView::new(sessions_view);
+                new_session_view.engine = engine;
+                model.view = View::NewSession(new_session_view);
             }
             View::SessionDetail(detail_view) => {
-                model.view = View::NewSession(NewSessionView::new(detail_view.from_sessions));
+                let sessions_view = detail_view.from_sessions;
+                let engine = default_new_session_engine(
+                    model.engine_filter,
+                    sessions_view.current_project(&model.data.projects),
+                );
+                let mut new_session_view = NewSessionView::new(sessions_view);
+                new_session_view.engine = engine;
+                model.view = View::NewSession(new_session_view);
             }
             View::Tasks(tasks_view) => {
                 let Some(mut sessions_view) =
@@ -2012,7 +2106,13 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                         model.engine_filter,
                     );
                 }
-                model.view = View::NewSession(NewSessionView::new(sessions_view));
+                let engine = default_new_session_engine(
+                    model.engine_filter,
+                    sessions_view.current_project(&model.data.projects),
+                );
+                let mut new_session_view = NewSessionView::new(sessions_view);
+                new_session_view.engine = engine;
+                model.view = View::NewSession(new_session_view);
             }
             View::TaskCreate(task_create) => {
                 let Some(mut sessions_view) = infer_sessions_view_for_window_menu_view(
@@ -2029,7 +2129,13 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                         model.engine_filter,
                     );
                 }
-                model.view = View::NewSession(NewSessionView::new(sessions_view));
+                let engine = default_new_session_engine(
+                    model.engine_filter,
+                    sessions_view.current_project(&model.data.projects),
+                );
+                let mut new_session_view = NewSessionView::new(sessions_view);
+                new_session_view.engine = engine;
+                model.view = View::NewSession(new_session_view);
             }
             View::TaskDetail(task_detail) => {
                 let Some(mut sessions_view) = infer_sessions_view_for_window_menu_view(
@@ -2046,7 +2152,13 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                         model.engine_filter,
                     );
                 }
-                model.view = View::NewSession(NewSessionView::new(sessions_view));
+                let engine = default_new_session_engine(
+                    model.engine_filter,
+                    sessions_view.current_project(&model.data.projects),
+                );
+                let mut new_session_view = NewSessionView::new(sessions_view);
+                new_session_view.engine = engine;
+                model.view = View::NewSession(new_session_view);
             }
             View::NewSession(_) => {}
             View::Processes(_) | View::ProcessOutput(_) | View::Error => {
@@ -2114,6 +2226,8 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
             || model.delete_sessions_confirm.is_some()
             || model.delete_task_confirm.is_some()
             || model.delete_tasks_confirm.is_some()
+            || model.session_rename.is_some()
+            || model.session_move.is_some()
             || model.session_result_preview.is_some()
             || model.session_stats_overlay.is_some()
             || model.project_stats_overlay.is_some()
@@ -2155,6 +2269,14 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
 
     if let Some(confirm) = model.delete_session_confirm.take() {
         return update_delete_session_confirm(model, confirm, key);
+    }
+
+    if let Some(dialog) = model.session_rename.take() {
+        return update_session_rename_dialog(model, dialog, key);
+    }
+
+    if let Some(dialog) = model.session_move.take() {
+        return update_session_move_dialog(model, dialog, key);
     }
 
     if let Some(confirm) = model.delete_tasks_confirm.take() {
@@ -2268,7 +2390,10 @@ fn infer_session_detail_target_view(
             let project = model.data.projects.get(project_index)?;
             let session = match model.engine_filter {
                 EngineFilter::All => project.sessions.first().cloned()?,
-                EngineFilter::Codex | EngineFilter::Claude | EngineFilter::Gemini => project
+                EngineFilter::Codex
+                | EngineFilter::Claude
+                | EngineFilter::Gemini
+                | EngineFilter::OpenCode => project
                     .sessions
                     .iter()
                     .find(|session| session_matches_engine_filter(session, model.engine_filter))
@@ -2370,6 +2495,7 @@ fn engine_filter_from_engine_menu_index(index: usize) -> Option<EngineFilter> {
         1 => Some(EngineFilter::Codex),
         2 => Some(EngineFilter::Claude),
         3 => Some(EngineFilter::Gemini),
+        4 => Some(EngineFilter::OpenCode),
         _ => None,
     }
 }
@@ -2591,6 +2717,16 @@ fn update_on_paste(model: AppModel, text: String) -> (AppModel, AppCommand) {
     if model.project_stats_overlay.is_some() {
         return (model, AppCommand::None);
     }
+    if let Some(mut dialog) = model.session_rename.take() {
+        dialog.editor.insert_str(&text);
+        model.session_rename = Some(dialog);
+        return (model, AppCommand::None);
+    }
+    if let Some(mut dialog) = model.session_move.take() {
+        dialog.editor.insert_str(&text);
+        model.session_move = Some(dialog);
+        return (model, AppCommand::None);
+    }
 
     let view = model.view.clone();
     if let View::NewSession(mut new_session_view) = view {
@@ -2706,6 +2842,85 @@ fn update_project_stats_overlay(
     }
 
     model.project_stats_overlay = Some(overlay);
+    (model, AppCommand::None)
+}
+
+fn update_session_rename_dialog(
+    mut model: AppModel,
+    mut dialog: SessionRenameDialog,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    match key.code {
+        KeyCode::Esc => {
+            model.session_rename = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Backspace => dialog.editor.backspace(),
+        KeyCode::Enter => {
+            let title = dialog.editor.text.trim().to_string();
+            let session = dialog.session.clone();
+            model.session_rename = None;
+            return (model, AppCommand::RenameSession { session, title });
+        }
+        KeyCode::Left => dialog.editor.move_left(),
+        KeyCode::Right => dialog.editor.move_right(),
+        KeyCode::Home => dialog.editor.move_home(),
+        KeyCode::End => dialog.editor.move_end(),
+        KeyCode::Delete => dialog.editor.delete_forward(),
+        KeyCode::Char(character) => {
+            if is_text_input_char(character) {
+                dialog.editor.insert_char(character);
+            }
+        }
+        _ => {}
+    }
+
+    model.session_rename = Some(dialog);
+    (model, AppCommand::None)
+}
+
+fn update_session_move_dialog(
+    mut model: AppModel,
+    mut dialog: SessionMoveDialog,
+    key: KeyEvent,
+) -> (AppModel, AppCommand) {
+    match key.code {
+        KeyCode::Esc => {
+            model.session_move = None;
+            return (model, AppCommand::None);
+        }
+        KeyCode::Backspace => dialog.editor.backspace(),
+        KeyCode::Enter => {
+            let raw = dialog.editor.text.trim().to_string();
+            let session = dialog.session.clone();
+            let project_path = if raw.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(raw))
+            };
+            model.session_move = None;
+            return (
+                model,
+                AppCommand::MoveSessionProject {
+                    session,
+                    project_path,
+                },
+            );
+        }
+        KeyCode::Left => dialog.editor.move_left(),
+        KeyCode::Right => dialog.editor.move_right(),
+        KeyCode::Home => dialog.editor.move_home(),
+        KeyCode::End => dialog.editor.move_end(),
+        KeyCode::Delete => dialog.editor.delete_forward(),
+        KeyCode::Char(character) => {
+            if is_text_input_char(character) {
+                dialog.editor.insert_char(character);
+            }
+        }
+        _ => {}
+    }
+
+    model.session_move = Some(dialog);
     (model, AppCommand::None)
 }
 
@@ -2996,6 +3211,8 @@ fn update_error(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                     delete_projects_confirm: model.delete_projects_confirm.clone(),
                     delete_session_confirm: model.delete_session_confirm.clone(),
                     delete_sessions_confirm: model.delete_sessions_confirm.clone(),
+                    session_rename: model.session_rename.clone(),
+                    session_move: model.session_move.clone(),
                     delete_task_confirm: model.delete_task_confirm.clone(),
                     delete_tasks_confirm: model.delete_tasks_confirm.clone(),
                     session_result_preview: model.session_result_preview.clone(),
@@ -3058,6 +3275,8 @@ fn update_projects(
                 delete_projects_confirm: model.delete_projects_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 delete_sessions_confirm: model.delete_sessions_confirm.clone(),
+                session_rename: model.session_rename.clone(),
+                session_move: model.session_move.clone(),
                 delete_task_confirm: model.delete_task_confirm.clone(),
                 delete_tasks_confirm: model.delete_tasks_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
@@ -3072,6 +3291,8 @@ fn update_projects(
             if !view.query.is_empty() {
                 view.query.clear();
                 apply_project_filter(&model.data.projects, &mut view, model.engine_filter);
+                clear_project_selection(&mut view);
+            } else if !view.selected_project_paths.is_empty() {
                 clear_project_selection(&mut view);
             }
         }
@@ -3089,6 +3310,9 @@ fn update_projects(
 
             return (model, AppCommand::OpenSessionResultPreview { session });
         }
+        KeyCode::Tab => {
+            toggle_project_selection(&model.data.projects, &mut view);
+        }
         KeyCode::Up => {
             if shift {
                 ensure_project_selection_anchor(&model.data.projects, &mut view);
@@ -3096,7 +3320,6 @@ fn update_projects(
                 update_project_range_selection(&model.data.projects, &mut view);
             } else {
                 view.selected = view.selected.saturating_sub(1);
-                clear_project_selection(&mut view);
             }
         }
         KeyCode::Down => {
@@ -3109,7 +3332,6 @@ fn update_projects(
                 } else {
                     view.selected =
                         (view.selected + 1).min(view.filtered_indices.len().saturating_sub(1));
-                    clear_project_selection(&mut view);
                 }
             }
         }
@@ -3121,7 +3343,6 @@ fn update_projects(
                 update_project_range_selection(&model.data.projects, &mut view);
             } else {
                 view.selected = view.selected.saturating_sub(step);
-                clear_project_selection(&mut view);
             }
         }
         KeyCode::PageDown => {
@@ -3135,7 +3356,6 @@ fn update_projects(
                 } else {
                     view.selected =
                         (view.selected + step).min(view.filtered_indices.len().saturating_sub(1));
-                    clear_project_selection(&mut view);
                 }
             }
         }
@@ -3175,6 +3395,8 @@ fn update_projects(
             delete_projects_confirm: model.delete_projects_confirm.clone(),
             delete_session_confirm: model.delete_session_confirm.clone(),
             delete_sessions_confirm: model.delete_sessions_confirm.clone(),
+            session_rename: model.session_rename.clone(),
+            session_move: model.session_move.clone(),
             delete_task_confirm: model.delete_task_confirm.clone(),
             delete_tasks_confirm: model.delete_tasks_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
@@ -3254,16 +3476,41 @@ fn session_matches_engine_filter(session: &SessionSummary, filter: EngineFilter)
         EngineFilter::Codex => session.engine == SessionEngine::Codex,
         EngineFilter::Claude => session.engine == SessionEngine::Claude,
         EngineFilter::Gemini => session.engine == SessionEngine::Gemini,
+        EngineFilter::OpenCode => session.engine == SessionEngine::OpenCode,
     }
 }
 
 fn project_matches_engine_filter(project: &ProjectSummary, filter: EngineFilter) -> bool {
     match filter {
         EngineFilter::All => true,
-        EngineFilter::Codex | EngineFilter::Claude | EngineFilter::Gemini => project
+        EngineFilter::Codex
+        | EngineFilter::Claude
+        | EngineFilter::Gemini
+        | EngineFilter::OpenCode => project
             .sessions
             .iter()
             .any(|session| session_matches_engine_filter(session, filter)),
+    }
+}
+
+fn default_new_session_engine(
+    filter: EngineFilter,
+    project: Option<&ProjectSummary>,
+) -> AgentEngine {
+    match filter {
+        EngineFilter::Codex => AgentEngine::Codex,
+        EngineFilter::Claude => AgentEngine::Claude,
+        EngineFilter::Gemini => AgentEngine::Codex,
+        EngineFilter::OpenCode => AgentEngine::Codex,
+        EngineFilter::All => project
+            .into_iter()
+            .flat_map(|project| project.sessions.iter())
+            .find_map(|session| match session.engine {
+                SessionEngine::Codex => Some(AgentEngine::Codex),
+                SessionEngine::Claude => Some(AgentEngine::Claude),
+                SessionEngine::Gemini | SessionEngine::OpenCode => None,
+            })
+            .unwrap_or(AgentEngine::Codex),
     }
 }
 
@@ -3506,6 +3753,22 @@ fn current_project_path(projects: &[ProjectSummary], view: &ProjectsView) -> Opt
     Some(project.project_path.clone())
 }
 
+fn toggle_project_selection(projects: &[ProjectSummary], view: &mut ProjectsView) {
+    let Some(project_path) = current_project_path(projects, view) else {
+        return;
+    };
+
+    if !view.selected_project_paths.remove(&project_path) {
+        view.selected_project_paths.insert(project_path.clone());
+    }
+
+    if view.selected_project_paths.is_empty() {
+        view.selection_anchor = None;
+    } else if view.selection_anchor.is_none() {
+        view.selection_anchor = Some(project_path);
+    }
+}
+
 fn clear_sessions_selection(view: &mut SessionsView) {
     view.selection_anchor = None;
     view.selected_log_paths.clear();
@@ -3574,6 +3837,22 @@ fn current_session_log_path(sessions: &[SessionSummary], view: &SessionsView) ->
     Some(session.log_path.clone())
 }
 
+fn toggle_sessions_selection(sessions: &[SessionSummary], view: &mut SessionsView) {
+    let Some(log_path) = current_session_log_path(sessions, view) else {
+        return;
+    };
+
+    if !view.selected_log_paths.remove(&log_path) {
+        view.selected_log_paths.insert(log_path.clone());
+    }
+
+    if view.selected_log_paths.is_empty() {
+        view.selection_anchor = None;
+    } else if view.selection_anchor.is_none() {
+        view.selection_anchor = Some(log_path);
+    }
+}
+
 fn clear_tasks_selection(view: &mut TasksView) {
     view.selection_anchor = None;
     view.selected_task_ids.clear();
@@ -3640,6 +3919,22 @@ fn current_task_id(view: &TasksView) -> Option<TaskId> {
     let task_index = view.filtered_indices.get(view.selected).copied()?;
     let task = view.tasks.get(task_index)?;
     Some(task.id.clone())
+}
+
+fn toggle_tasks_selection(view: &mut TasksView) {
+    let Some(task_id) = current_task_id(view) else {
+        return;
+    };
+
+    if !view.selected_task_ids.remove(&task_id) {
+        view.selected_task_ids.insert(task_id.clone());
+    }
+
+    if view.selected_task_ids.is_empty() {
+        view.selection_anchor = None;
+    } else if view.selection_anchor.is_none() {
+        view.selection_anchor = Some(task_id);
+    }
 }
 
 fn selected_task_id(view: &TasksView) -> Option<TaskId> {
@@ -3805,6 +4100,52 @@ fn update_sessions(
             };
             return (model, AppCommand::OpenSessionStats { session });
         }
+        KeyCode::Char('e') | KeyCode::Char('E') if new_modifier => {
+            let Some(project) = view.current_project(&model.data.projects) else {
+                return (model, AppCommand::None);
+            };
+            let Some(selected_index) = view.filtered_indices.get(view.session_selected).copied()
+            else {
+                model.notice = Some("No session selected.".to_string());
+                return (model, AppCommand::None);
+            };
+            let Some(session) = project.sessions.get(selected_index).cloned() else {
+                model.notice = Some("No session selected.".to_string());
+                return (model, AppCommand::None);
+            };
+
+            model.session_rename = Some(SessionRenameDialog {
+                session: session.clone(),
+                editor: LineEditor::from_text(session.title.clone()),
+            });
+            model.help_open = false;
+            model.system_menu = None;
+            model.view = View::Sessions(view);
+            return (model, AppCommand::None);
+        }
+        KeyCode::Char('p') | KeyCode::Char('P') if new_modifier => {
+            let Some(project) = view.current_project(&model.data.projects) else {
+                return (model, AppCommand::None);
+            };
+            let Some(selected_index) = view.filtered_indices.get(view.session_selected).copied()
+            else {
+                model.notice = Some("No session selected.".to_string());
+                return (model, AppCommand::None);
+            };
+            let Some(session) = project.sessions.get(selected_index).cloned() else {
+                model.notice = Some("No session selected.".to_string());
+                return (model, AppCommand::None);
+            };
+
+            model.session_move = Some(SessionMoveDialog {
+                session: session.clone(),
+                editor: LineEditor::from_text(session.meta.cwd.display().to_string()),
+            });
+            model.help_open = false;
+            model.system_menu = None;
+            model.view = View::Sessions(view);
+            return (model, AppCommand::None);
+        }
         KeyCode::Enter => {
             let Some(project) = view.current_project(&model.data.projects) else {
                 return (model, AppCommand::None);
@@ -3838,6 +4179,12 @@ fn update_sessions(
                 return (model, AppCommand::None);
             }
 
+            if !view.selected_log_paths.is_empty() {
+                clear_sessions_selection(&mut view);
+                model.view = View::Sessions(view);
+                return (model, AppCommand::None);
+            }
+
             let mut projects_view = ProjectsView::new(&model.data.projects);
             apply_project_filter(
                 &model.data.projects,
@@ -3857,6 +4204,8 @@ fn update_sessions(
                 delete_projects_confirm: model.delete_projects_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 delete_sessions_confirm: model.delete_sessions_confirm.clone(),
+                session_rename: model.session_rename.clone(),
+                session_move: model.session_move.clone(),
                 delete_task_confirm: model.delete_task_confirm.clone(),
                 delete_tasks_confirm: model.delete_tasks_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
@@ -3878,7 +4227,6 @@ fn update_sessions(
                 }
             } else {
                 view.session_selected = view.session_selected.saturating_sub(1);
-                clear_sessions_selection(&mut view);
             }
         }
         KeyCode::Down => {
@@ -3895,7 +4243,6 @@ fn update_sessions(
                 } else {
                     view.session_selected = (view.session_selected + 1)
                         .min(view.filtered_indices.len().saturating_sub(1));
-                    clear_sessions_selection(&mut view);
                 }
             }
         }
@@ -3911,7 +4258,6 @@ fn update_sessions(
                 }
             } else {
                 view.session_selected = view.session_selected.saturating_sub(step);
-                clear_sessions_selection(&mut view);
             }
         }
         KeyCode::PageDown => {
@@ -3929,7 +4275,6 @@ fn update_sessions(
                 } else {
                     view.session_selected = (view.session_selected + step)
                         .min(view.filtered_indices.len().saturating_sub(1));
-                    clear_sessions_selection(&mut view);
                 }
             }
         }
@@ -3968,6 +4313,8 @@ fn update_sessions(
                     delete_projects_confirm: model.delete_projects_confirm.clone(),
                     delete_session_confirm: model.delete_session_confirm.clone(),
                     delete_sessions_confirm: model.delete_sessions_confirm.clone(),
+                    session_rename: model.session_rename.clone(),
+                    session_move: model.session_move.clone(),
                     delete_task_confirm: model.delete_task_confirm.clone(),
                     delete_tasks_confirm: model.delete_tasks_confirm.clone(),
                     session_result_preview: model.session_result_preview.clone(),
@@ -3983,6 +4330,13 @@ fn update_sessions(
             open_delete_session_confirm(&mut model, &view);
         }
         KeyCode::Char('n') | KeyCode::Char('N') if new_modifier => {
+            let engine = default_new_session_engine(
+                model.engine_filter,
+                view.current_project(&model.data.projects),
+            );
+            let mut new_session_view = NewSessionView::new(view.clone());
+            new_session_view.engine = engine;
+
             let next = AppModel {
                 data: model.data.clone(),
                 session_index: model.session_index.clone(),
@@ -3996,13 +4350,15 @@ fn update_sessions(
                 delete_projects_confirm: model.delete_projects_confirm.clone(),
                 delete_session_confirm: model.delete_session_confirm.clone(),
                 delete_sessions_confirm: model.delete_sessions_confirm.clone(),
+                session_rename: model.session_rename.clone(),
+                session_move: model.session_move.clone(),
                 delete_task_confirm: model.delete_task_confirm.clone(),
                 delete_tasks_confirm: model.delete_tasks_confirm.clone(),
                 session_result_preview: model.session_result_preview.clone(),
                 session_stats_overlay: model.session_stats_overlay.clone(),
                 project_stats_overlay: model.project_stats_overlay.clone(),
                 processes: model.processes.clone(),
-                view: View::NewSession(NewSessionView::new(view.clone())),
+                view: View::NewSession(new_session_view),
             };
             return (next, AppCommand::None);
         }
@@ -4018,6 +4374,13 @@ fn update_sessions(
                 return (model, AppCommand::None);
             };
             return (model, AppCommand::OpenSessionResultPreview { session });
+        }
+        KeyCode::Tab => {
+            if let Some(project) = view.current_project(&model.data.projects) {
+                toggle_sessions_selection(&project.sessions, &mut view);
+            } else {
+                clear_sessions_selection(&mut view);
+            }
         }
         KeyCode::Char(character) => {
             if is_text_input_char(character) {
@@ -4048,6 +4411,8 @@ fn update_sessions(
             delete_projects_confirm: model.delete_projects_confirm.clone(),
             delete_session_confirm: model.delete_session_confirm.clone(),
             delete_sessions_confirm: model.delete_sessions_confirm.clone(),
+            session_rename: model.session_rename.clone(),
+            session_move: model.session_move.clone(),
             delete_task_confirm: model.delete_task_confirm.clone(),
             delete_tasks_confirm: model.delete_tasks_confirm.clone(),
             session_result_preview: model.session_result_preview.clone(),
@@ -4367,6 +4732,10 @@ fn update_session_detail(
     mut view: SessionDetailView,
     key: KeyEvent,
 ) -> (AppModel, AppCommand) {
+    let new_modifier = key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::SUPER)
+        || key.modifiers.contains(KeyModifiers::META);
+
     if view.output_overlay_open {
         match key.code {
             KeyCode::Esc | KeyCode::Backspace | KeyCode::Enter => {
@@ -4415,6 +4784,22 @@ fn update_session_detail(
                     session: view.session.clone(),
                 },
             );
+        }
+        KeyCode::Char('e') | KeyCode::Char('E') if new_modifier => {
+            model.session_rename = Some(SessionRenameDialog {
+                session: view.session.clone(),
+                editor: LineEditor::from_text(view.session.title.clone()),
+            });
+            model.help_open = false;
+            model.system_menu = None;
+        }
+        KeyCode::Char('p') | KeyCode::Char('P') if new_modifier => {
+            model.session_move = Some(SessionMoveDialog {
+                session: view.session.clone(),
+                editor: LineEditor::from_text(view.session.meta.cwd.display().to_string()),
+            });
+            model.help_open = false;
+            model.system_menu = None;
         }
         KeyCode::Up => match view.focus {
             SessionDetailFocus::Timeline => {
@@ -4502,7 +4887,8 @@ fn update_session_detail(
             };
 
             match fork_context_from_timeline_item(&view.session, item) {
-                Ok(fork) => {
+                Ok(mut fork) => {
+                    fork.project_path = view.from_sessions.project_path.clone();
                     let mut new_view = NewSessionView::new(view.from_sessions.clone());
                     new_view.engine = AgentEngine::Codex;
                     new_view.io_mode = SpawnIoMode::Pipes;
@@ -4576,6 +4962,12 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
                 return (model, AppCommand::None);
             }
 
+            if !view.selected_task_ids.is_empty() {
+                clear_tasks_selection(&mut view);
+                model.view = View::Tasks(view);
+                return (model, AppCommand::None);
+            }
+
             model.view = *view.return_to;
             return (model, AppCommand::None);
         }
@@ -4591,6 +4983,9 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
             model.view = *view.return_to;
             return (model, AppCommand::None);
         }
+        KeyCode::Tab => {
+            toggle_tasks_selection(&mut view);
+        }
         KeyCode::Up => {
             if shift {
                 ensure_tasks_selection_anchor(&mut view);
@@ -4598,7 +4993,6 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
                 update_tasks_range_selection(&mut view);
             } else {
                 view.selected = view.selected.saturating_sub(1);
-                clear_tasks_selection(&mut view);
             }
         }
         KeyCode::Down => {
@@ -4611,7 +5005,6 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
                 } else {
                     view.selected =
                         (view.selected + 1).min(view.filtered_indices.len().saturating_sub(1));
-                    clear_tasks_selection(&mut view);
                 }
             }
         }
@@ -4623,7 +5016,6 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
                 update_tasks_range_selection(&mut view);
             } else {
                 view.selected = view.selected.saturating_sub(step);
-                clear_tasks_selection(&mut view);
             }
         }
         KeyCode::PageDown => {
@@ -4637,7 +5029,6 @@ fn update_tasks(mut model: AppModel, mut view: TasksView, key: KeyEvent) -> (App
                 } else {
                     view.selected =
                         (view.selected + step).min(view.filtered_indices.len().saturating_sub(1));
-                    clear_tasks_selection(&mut view);
                 }
             }
         }

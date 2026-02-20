@@ -129,6 +129,14 @@ pub fn render(frame: &mut Frame, model: &AppModel) {
     if let Some(overlay) = &model.project_stats_overlay {
         render_project_stats_overlay(frame, content_area, overlay);
     }
+
+    if let Some(dialog) = &model.session_rename {
+        render_session_rename_overlay(frame, content_area, dialog);
+    }
+
+    if let Some(dialog) = &model.session_move {
+        render_session_move_overlay(frame, content_area, dialog);
+    }
 }
 
 fn should_dim_background_for_modal(model: &AppModel) -> bool {
@@ -139,6 +147,8 @@ fn should_dim_background_for_modal(model: &AppModel) -> bool {
         || model.delete_sessions_confirm.is_some()
         || model.delete_task_confirm.is_some()
         || model.delete_tasks_confirm.is_some()
+        || model.session_rename.is_some()
+        || model.session_move.is_some()
         || model.session_result_preview.is_some()
         || model.session_stats_overlay.is_some()
         || model.project_stats_overlay.is_some()
@@ -527,9 +537,9 @@ fn render_projects(
         let (sessions_col_width, modified_col_width) =
             project_right_columns_width(projects, filtered_indices);
 
-        let dot_width = UnicodeWidthStr::width("● ");
+        let prefix_width = UnicodeWidthStr::width("CX ");
         let sep_width = UnicodeWidthStr::width(" │ ");
-        let fixed_width = dot_width
+        let fixed_width = prefix_width
             .saturating_add(sep_width.saturating_mul(3))
             .saturating_add(sessions_col_width)
             .saturating_add(modified_col_width);
@@ -568,10 +578,13 @@ fn render_projects(
                         project_table_list_item(
                             project,
                             is_selected,
-                            name_col_width,
-                            path_col_width,
-                            sessions_col_width,
-                            modified_col_width,
+                            ProjectTableColumnWidths {
+                                name: name_col_width,
+                                path: path_col_width,
+                                sessions: sessions_col_width,
+                                modified: modified_col_width,
+                            },
+                            model.engine_filter,
                             &projects_view.query,
                         )
                     } else {
@@ -581,6 +594,7 @@ fn render_projects(
                             max_width,
                             sessions_col_width,
                             modified_col_width,
+                            model.engine_filter,
                             &projects_view.query,
                         )
                     }
@@ -889,7 +903,7 @@ fn render_tasks(
         frame.render_stateful_widget(list, list_area, &mut state);
     }
 
-    let footer_text = "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Ctrl+Enter/Cmd+Enter=spawn  n=new  Del=delete  Backspace=edit  Esc=clear/back  Ctrl+4/Cmd+4=tasks  Ctrl+T/Cmd+T=new  F3=stats";
+    let footer_text = "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Tab=select  Ctrl+Enter/Cmd+Enter=spawn  n=new  Del=delete  Backspace=edit  Esc=clear/back  Ctrl+4/Cmd+4=tasks  Ctrl+T/Cmd+T=new  F3=stats";
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(footer_text.to_string()));
     if let Some(notice) = model.notice.as_deref() {
@@ -1658,11 +1672,11 @@ fn projects_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let text = if warnings == 0 {
-        "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Space=result  Del=delete  Esc=clear  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+        "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Tab=select  Space=result  Del=delete  Esc=clear  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
             .to_string()
     } else {
         format!(
-            "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Space=result  Del=delete  Esc=clear  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
+            "Keys: arrows=move  PgUp/PgDn=page  Enter=open  Tab=select  Space=result  Del=delete  Esc=clear  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
         )
     };
     footer_paragraph(text, notice, update_hint, processes_running)
@@ -1675,11 +1689,11 @@ fn sessions_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let text = if warnings == 0 {
-        "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Space=result  F3=stats  Ctrl+N/Cmd+N=new  Del=delete  Esc=clear/back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+        "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Tab=select  Space=result  F3=stats  Ctrl+E/Cmd+E=rename  Ctrl+P/Cmd+P=move  Ctrl+N/Cmd+N=new  Del=delete  Esc=clear/back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
             .to_string()
     } else {
         format!(
-            "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Space=result  F3=stats  Ctrl+N/Cmd+N=new  Del=delete  Esc=clear/back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
+            "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Tab=select  Space=result  F3=stats  Ctrl+E/Cmd+E=rename  Ctrl+P/Cmd+P=move  Ctrl+N/Cmd+N=new  Del=delete  Esc=clear/back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
         )
     };
     footer_paragraph(text, notice, update_hint, processes_running)
@@ -1968,29 +1982,129 @@ fn apply_multi_select_style(item: ListItem<'static>, is_selected: bool) -> ListI
     }
 }
 
+fn engine_badge_span(engine: crate::domain::SessionEngine) -> Span<'static> {
+    let (badge, color) = match engine {
+        crate::domain::SessionEngine::Codex => ("CX ", theme::SUCCESS),
+        crate::domain::SessionEngine::Claude => ("CL ", theme::ACCENT),
+        crate::domain::SessionEngine::Gemini => ("GM ", theme::MUTED),
+        crate::domain::SessionEngine::OpenCode => ("OC ", theme::DIM),
+    };
+    Span::styled(
+        badge,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn project_engine_badge_span(
+    project: &crate::domain::ProjectSummary,
+    engine_filter: EngineFilter,
+) -> Span<'static> {
+    match engine_filter {
+        EngineFilter::All => project
+            .sessions
+            .first()
+            .map(|session| engine_badge_span(session.engine))
+            .unwrap_or_else(|| Span::styled("-- ", Style::default().fg(theme::DIM))),
+        EngineFilter::Codex => engine_badge_span(crate::domain::SessionEngine::Codex),
+        EngineFilter::Claude => engine_badge_span(crate::domain::SessionEngine::Claude),
+        EngineFilter::Gemini => engine_badge_span(crate::domain::SessionEngine::Gemini),
+        EngineFilter::OpenCode => engine_badge_span(crate::domain::SessionEngine::OpenCode),
+    }
+}
+
+#[cfg(test)]
+mod project_engine_badge_tests {
+    use super::*;
+    use crate::domain::{ProjectSummary, SessionEngine, SessionMeta, make_session_summary};
+    use std::path::PathBuf;
+    use std::time::SystemTime;
+
+    fn make_project_with_sessions(engines: &[SessionEngine]) -> ProjectSummary {
+        let now = SystemTime::now();
+        let cwd = PathBuf::from("/tmp/project");
+        let sessions = engines
+            .iter()
+            .enumerate()
+            .map(|(index, engine)| {
+                make_session_summary(
+                    SessionMeta {
+                        id: format!("s{index}"),
+                        cwd: cwd.clone(),
+                        started_at_rfc3339: "2026-02-20T00:00:00Z".to_string(),
+                    },
+                    PathBuf::from(format!("/tmp/log{index}.jsonl")),
+                    "t".to_string(),
+                    0,
+                    Some(now),
+                    *engine,
+                )
+            })
+            .collect();
+
+        ProjectSummary {
+            name: "project".to_string(),
+            project_path: cwd,
+            sessions,
+            last_modified: Some(now),
+        }
+    }
+
+    #[test]
+    fn uses_newest_session_engine_when_filter_all() {
+        let project = make_project_with_sessions(&[SessionEngine::Gemini, SessionEngine::Codex]);
+        let badge = project_engine_badge_span(&project, EngineFilter::All);
+        assert_eq!(badge.content.as_ref(), "GM ");
+    }
+
+    #[test]
+    fn forces_badge_to_match_engine_filter() {
+        let project = make_project_with_sessions(&[SessionEngine::Codex]);
+        let badge = project_engine_badge_span(&project, EngineFilter::Claude);
+        assert_eq!(badge.content.as_ref(), "CL ");
+    }
+
+    #[test]
+    fn uses_placeholder_for_empty_projects() {
+        let project = make_project_with_sessions(&[]);
+        let badge = project_engine_badge_span(&project, EngineFilter::All);
+        assert_eq!(badge.content.as_ref(), "-- ");
+    }
+
+    #[test]
+    fn badge_width_is_stable() {
+        let project = make_project_with_sessions(&[SessionEngine::Codex]);
+
+        for filter in [
+            EngineFilter::All,
+            EngineFilter::Codex,
+            EngineFilter::Claude,
+            EngineFilter::Gemini,
+            EngineFilter::OpenCode,
+        ] {
+            let badge = project_engine_badge_span(&project, filter);
+            assert_eq!(UnicodeWidthStr::width(badge.content.as_ref()), 3);
+        }
+    }
+}
+
 fn project_list_item(
     project: &crate::domain::ProjectSummary,
     is_selected: bool,
     max_width: usize,
     sessions_col_width: usize,
     modified_col_width: usize,
+    engine_filter: EngineFilter,
     query: &str,
 ) -> ListItem<'static> {
     if max_width == 0 {
         return ListItem::new(Line::from(""));
     }
 
-    let online = is_online(project.last_modified);
-    let online_dot_width = UnicodeWidthStr::width("● ");
-    let dot = if online {
-        Span::styled("● ", Style::default().fg(theme::ACCENT))
-    } else {
-        Span::raw("  ")
-    };
-
-    let content_width = max_width.saturating_sub(online_dot_width);
+    let badge = project_engine_badge_span(project, engine_filter);
+    let badge_width = UnicodeWidthStr::width("CX ");
+    let content_width = max_width.saturating_sub(badge_width);
     if content_width == 0 {
-        return apply_multi_select_style(ListItem::new(Line::from(vec![dot])), is_selected);
+        return apply_multi_select_style(ListItem::new(Line::from(vec![badge])), is_selected);
     }
 
     let name = project.name.as_str();
@@ -2020,7 +2134,7 @@ fn project_list_item(
     if right_width + gap + min_left >= content_width {
         let name = truncate_end(name, content_width);
         let mut spans = Vec::new();
-        spans.push(dot);
+        spans.push(badge);
         spans.extend(highlight_query_spans(
             &name,
             query,
@@ -2037,7 +2151,7 @@ fn project_list_item(
     let min_path = 8usize;
     let mut left_width = 0usize;
     let mut spans = Vec::new();
-    spans.push(dot);
+    spans.push(badge);
 
     if left_available >= min_left + separator_width + min_path {
         let name_budget = left_available.saturating_sub(separator_width + min_path);
@@ -2084,24 +2198,23 @@ fn project_list_item(
     apply_multi_select_style(ListItem::new(Line::from(spans)), is_selected)
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ProjectTableColumnWidths {
+    name: usize,
+    path: usize,
+    sessions: usize,
+    modified: usize,
+}
+
 fn project_table_list_item(
     project: &crate::domain::ProjectSummary,
     is_selected: bool,
-    name_col_width: usize,
-    path_col_width: usize,
-    sessions_col_width: usize,
-    modified_col_width: usize,
+    widths: ProjectTableColumnWidths,
+    engine_filter: EngineFilter,
     query: &str,
 ) -> ListItem<'static> {
-    let online = is_online(project.last_modified);
-    let dot = if online {
-        Span::styled("● ", Style::default().fg(theme::ACCENT))
-    } else {
-        Span::raw("  ")
-    };
-
-    let name = truncate_end(project.name.as_str(), name_col_width);
-    let name = pad_right(&name, name_col_width);
+    let name = truncate_end(project.name.as_str(), widths.name);
+    let name = pad_right(&name, widths.name);
     let name_spans = highlight_query_spans(
         &name,
         query,
@@ -2109,8 +2222,8 @@ fn project_table_list_item(
     );
 
     let path = project.project_path.display().to_string();
-    let path = truncate_middle(&path, path_col_width);
-    let path = pad_right(&path, path_col_width);
+    let path = truncate_middle(&path, widths.path);
+    let path = pad_right(&path, widths.path);
     let path_spans = highlight_query_spans(&path, query, Style::default().fg(theme::DIM));
 
     let sessions_count = project.sessions.len();
@@ -2120,19 +2233,21 @@ fn project_table_list_item(
         "sessions"
     };
     let sessions_col = format!("{} {session_word}", format_commas_usize(sessions_count));
-    let sessions_col = pad_left(&sessions_col, sessions_col_width);
+    let sessions_col = pad_left(&sessions_col, widths.sessions);
 
     let modified = if project.last_modified.is_some() {
         relative_time_ago(project.last_modified)
     } else {
         "-".to_string()
     };
-    let modified = pad_left(&modified, modified_col_width);
+    let modified = pad_left(&modified, widths.modified);
 
     let sep = Span::styled(" │ ", Style::default().fg(theme::BORDER));
 
+    let badge = project_engine_badge_span(project, engine_filter);
+
     let mut spans = Vec::new();
-    spans.push(dot);
+    spans.push(badge);
     spans.extend(name_spans);
     spans.push(sep.clone());
     spans.extend(path_spans);
@@ -2177,9 +2292,11 @@ fn session_list_item(
         Span::raw("  ")
     };
 
-    let content_width = max_width.saturating_sub(online_dot_width);
+    let badge = engine_badge_span(session.engine);
+    let badge_width = UnicodeWidthStr::width("CX ");
+    let content_width = max_width.saturating_sub(online_dot_width.saturating_add(badge_width));
     if content_width == 0 {
-        return apply_multi_select_style(ListItem::new(Line::from(vec![dot])), is_selected);
+        return apply_multi_select_style(ListItem::new(Line::from(vec![dot, badge])), is_selected);
     }
 
     let size = format_size(session.file_size_bytes, DECIMAL);
@@ -2197,6 +2314,7 @@ fn session_list_item(
         let title = truncate_end(&session.title, content_width);
         let mut spans = Vec::new();
         spans.push(dot);
+        spans.push(badge);
         spans.extend(highlight_query_spans(&title, query, Style::default()));
         return apply_multi_select_style(ListItem::new(Line::from(spans)), is_selected);
     }
@@ -2208,6 +2326,7 @@ fn session_list_item(
 
     let mut spans = Vec::new();
     spans.push(dot);
+    spans.push(badge);
     spans.extend(highlight_query_spans(&title, query, Style::default()));
     spans.push(Span::raw(" ".repeat(padding_width)));
     spans.push(Span::styled(size, Style::default().fg(theme::DIM)));
@@ -2657,7 +2776,7 @@ fn session_detail_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let mut parts = vec![
-        "Keys: Tab=focus  arrows=move/scroll  PgUp/PgDn=page  Enter=ToolOut (Tool)  f=fork  o=result  F3=stats  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+        "Keys: Tab=focus  arrows=move/scroll  PgUp/PgDn=page  Enter=ToolOut (Tool)  f=fork  o=result  F3=stats  Ctrl+E/Cmd+E=rename  Ctrl+P/Cmd+P=move  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
             .to_string(),
         format!("items: {item_count}"),
     ];
@@ -3786,6 +3905,229 @@ fn render_project_stats_overlay(
     frame.render_widget(hint, chunks[1]);
 }
 
+fn render_session_rename_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    dialog: &crate::app::SessionRenameDialog,
+) {
+    let popup = centered_rect(76, 26, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
+        .padding(Padding::horizontal(1))
+        .title(Title::from(Span::styled(
+            "Rename Session",
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+    let max_line_width = (chunks[0].width as usize).saturating_sub(1);
+
+    let label_style = Style::default().fg(theme::MUTED);
+    let value_style = Style::default().fg(theme::FG);
+    let dim_style = Style::default().fg(theme::DIM);
+    let path_style = Style::default().fg(theme::ACCENT);
+
+    let id_prefix = "Session: ";
+    let id_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(id_prefix));
+    let id_value = truncate_end(&dialog.session.meta.id, id_budget);
+
+    let path_prefix = "Project: ";
+    let path_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(path_prefix));
+    let cwd_value = truncate_middle(&dialog.session.meta.cwd.display().to_string(), path_budget);
+
+    let info = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled(id_prefix, label_style),
+            Span::styled(id_value, value_style.add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled(path_prefix, label_style),
+            Span::styled(cwd_value, path_style),
+        ]),
+    ])
+    .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
+    frame.render_widget(info, chunks[0]);
+
+    let placeholder = "Type a title (empty clears rename)...";
+    let input_text = if dialog.editor.text.is_empty() {
+        Text::from(Line::from(Span::styled(
+            placeholder,
+            Style::default().fg(theme::DIM),
+        )))
+    } else {
+        Text::from(dialog.editor.text.as_str())
+    };
+
+    let input = Paragraph::new(input_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
+            .padding(Padding::horizontal(1))
+            .title("Title")
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
+    );
+    frame.render_widget(input, chunks[1]);
+
+    let hint = Paragraph::new("Keys: Enter=save  Esc=cancel  Backspace/Delete=edit")
+        .style(dim_style)
+        .alignment(Alignment::Center);
+    frame.render_widget(hint, chunks[2]);
+
+    let input_inner = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .title("Title")
+        .inner(chunks[1]);
+    if input_inner.width > 0 {
+        let mut x_offset = 0u16;
+        for (idx, ch) in dialog.editor.text.chars().enumerate() {
+            if idx >= dialog.editor.cursor_col {
+                break;
+            }
+            x_offset = x_offset.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(0) as u16);
+        }
+        let x = input_inner.x.saturating_add(x_offset).min(
+            input_inner
+                .x
+                .saturating_add(input_inner.width.saturating_sub(1)),
+        );
+        frame.set_cursor_position(Position {
+            x,
+            y: input_inner.y,
+        });
+    }
+}
+
+fn render_session_move_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    dialog: &crate::app::SessionMoveDialog,
+) {
+    let popup = centered_rect(76, 26, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
+        .padding(Padding::horizontal(1))
+        .title(Title::from(Span::styled(
+            "Move Session to Project",
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+    let max_line_width = (chunks[0].width as usize).saturating_sub(1);
+
+    let label_style = Style::default().fg(theme::MUTED);
+    let value_style = Style::default().fg(theme::FG);
+    let dim_style = Style::default().fg(theme::DIM);
+    let path_style = Style::default().fg(theme::ACCENT);
+
+    let id_prefix = "Session: ";
+    let id_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(id_prefix));
+    let id_value = truncate_end(&dialog.session.meta.id, id_budget);
+
+    let current_prefix = "Current: ";
+    let current_budget = max_line_width.saturating_sub(UnicodeWidthStr::width(current_prefix));
+    let current_value = truncate_middle(
+        &dialog.session.meta.cwd.display().to_string(),
+        current_budget,
+    );
+
+    let info = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled(id_prefix, label_style),
+            Span::styled(id_value, value_style.add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled(current_prefix, label_style),
+            Span::styled(current_value, path_style),
+        ]),
+    ])
+    .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
+    frame.render_widget(info, chunks[0]);
+
+    let placeholder = "Type a project path (empty clears override)...";
+    let input_text = if dialog.editor.text.is_empty() {
+        Text::from(Line::from(Span::styled(
+            placeholder,
+            Style::default().fg(theme::DIM),
+        )))
+    } else {
+        Text::from(dialog.editor.text.as_str())
+    };
+
+    let input = Paragraph::new(input_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
+            .padding(Padding::horizontal(1))
+            .title("Project")
+            .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
+    );
+    frame.render_widget(input, chunks[1]);
+
+    let hint = Paragraph::new("Keys: Enter=move  Esc=cancel  Backspace/Delete=edit")
+        .style(dim_style)
+        .alignment(Alignment::Center);
+    frame.render_widget(hint, chunks[2]);
+
+    let input_inner = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .title("Project")
+        .inner(chunks[1]);
+    if input_inner.width > 0 {
+        let mut x_offset = 0u16;
+        for (idx, ch) in dialog.editor.text.chars().enumerate() {
+            if idx >= dialog.editor.cursor_col {
+                break;
+            }
+            x_offset = x_offset.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(0) as u16);
+        }
+        let x = input_inner.x.saturating_add(x_offset).min(
+            input_inner
+                .x
+                .saturating_add(input_inner.width.saturating_sub(1)),
+        );
+        frame.set_cursor_position(Position {
+            x,
+            y: input_inner.y,
+        });
+    }
+}
+
 fn render_session_stats_overlay(
     frame: &mut Frame,
     area: Rect,
@@ -4198,6 +4540,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("Navigation"),
         Line::from("  - Arrows: move selection"),
         Line::from("  - Shift+Arrows: extend selection range"),
+        Line::from("  - Tab: toggle selection"),
         Line::from("  - PgUp/PgDn: page up/down"),
         Line::from("  - Shift+PgUp/PgDn: extend selection range"),
         Line::from("  - Mouse: wheel scrolls, left click selects/focuses"),
@@ -4223,6 +4566,8 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - Sessions: Del deletes session log (Backspace edits filter)"),
         Line::from("  - Sessions: Space shows Result (last Out)"),
         Line::from("  - Sessions: Ctrl+N/Cmd+N opens New Session"),
+        Line::from("  - Sessions: Ctrl+E/Cmd+E renames session title"),
+        Line::from("  - Sessions: Ctrl+P/Cmd+P moves session to another project"),
         Line::from("  - Sessions: F3 shows Stats"),
         Line::from(
             "  - New Session: Ctrl+Enter/Cmd+Enter sends, Shift+Tab switches engine, F4 switches I/O mode",
@@ -4233,9 +4578,13 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
             "  - New Task: Ctrl+S saves, Ctrl+I inserts image, Ctrl+V pastes image, Ctrl+P edits project path",
         ),
         Line::from("  - Task Detail: Ctrl+Enter spawns, Shift+Tab switches engine, Del deletes"),
-        Line::from("  - Projects/Sessions: ● indicates online"),
+        Line::from("  - Projects: CX/CL/GM indicates engine (matches filter or newest)"),
+        Line::from("  - Sessions: CX/CL/GM indicates engine"),
+        Line::from("  - Sessions: ● indicates online"),
         Line::from("  - Session Detail: Tab switches focus (Timeline / Details)"),
         Line::from("  - Session Detail: o shows Result (last Out)"),
+        Line::from("  - Session Detail: Ctrl+E/Cmd+E renames session title"),
+        Line::from("  - Session Detail: Ctrl+P/Cmd+P moves session to another project"),
         Line::from("  - Session Detail: F3 shows Stats"),
         Line::from("  - Session Detail: Enter jumps to ToolOut for Tool calls"),
         Line::from(

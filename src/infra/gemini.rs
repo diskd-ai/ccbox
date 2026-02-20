@@ -2,7 +2,8 @@ use crate::domain::{
     GeminiTimelineParseOutput, GeminiUserLogEntry, SessionEngine, SessionMeta, SessionSummary,
     SessionTimeline, derive_title_from_user_text, extract_gemini_first_user_message,
     extract_gemini_session_id, extract_gemini_session_start_time, infer_gemini_title_from_session,
-    is_metadata_prompt, make_session_summary, parse_gemini_logs_entries, parse_gemini_timeline_items,
+    is_metadata_prompt, make_session_summary, parse_gemini_logs_entries,
+    parse_gemini_timeline_items,
 };
 use crate::infra::{LastAssistantOutput, ScanWarningCount};
 use dirs::home_dir;
@@ -303,7 +304,10 @@ pub fn load_gemini_session_timeline(path: &Path) -> io::Result<SessionTimeline> 
     let value: serde_json::Value = serde_json::from_reader(file)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
-    let GeminiTimelineParseOutput { mut items, warnings } = parse_gemini_timeline_items(&value);
+    let GeminiTimelineParseOutput {
+        mut items,
+        warnings,
+    } = parse_gemini_timeline_items(&value);
     let truncated = items.len() > MAX_TIMELINE_ITEMS;
     if truncated {
         items.truncate(MAX_TIMELINE_ITEMS);

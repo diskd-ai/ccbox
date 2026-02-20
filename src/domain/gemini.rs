@@ -65,7 +65,10 @@ pub fn extract_gemini_first_user_message(value: &Value) -> Option<String> {
         if message.get("type").and_then(|v| v.as_str()) != Some("user") {
             continue;
         }
-        let content = message.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let content = message
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let content = content.trim_end();
         if content.trim().is_empty() {
             continue;
@@ -336,15 +339,42 @@ mod tests {
         });
 
         let parsed = parse_gemini_timeline_items(&json);
-        assert!(parsed.items.iter().any(|i| i.kind == TimelineItemKind::User));
-        assert!(parsed
-            .items
-            .iter()
-            .any(|i| i.kind == TimelineItemKind::Assistant));
-        assert!(parsed.items.iter().any(|i| i.kind == TimelineItemKind::Thinking));
-        assert!(parsed.items.iter().any(|i| i.kind == TimelineItemKind::ToolCall));
-        assert!(parsed.items.iter().any(|i| i.kind == TimelineItemKind::ToolOutput));
-        assert!(parsed.items.iter().any(|i| i.kind == TimelineItemKind::TokenCount));
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|i| i.kind == TimelineItemKind::User)
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|i| i.kind == TimelineItemKind::Assistant)
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|i| i.kind == TimelineItemKind::Thinking)
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|i| i.kind == TimelineItemKind::ToolCall)
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|i| i.kind == TimelineItemKind::ToolOutput)
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|i| i.kind == TimelineItemKind::TokenCount)
+        );
     }
 
     #[test]

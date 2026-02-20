@@ -737,11 +737,11 @@ fn build_codex_exec_resume_command(
     let mut command = Command::new("codex");
     command
         .arg("exec")
-        .arg("resume")
         .arg("--full-auto")
         .arg("--json")
         .arg("-C")
         .arg(project_path)
+        .arg("resume")
         .arg(session_id)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1092,11 +1092,11 @@ mod tests {
             args,
             vec![
                 "exec".to_string(),
-                "resume".to_string(),
                 "--full-auto".to_string(),
                 "--json".to_string(),
                 "-C".to_string(),
                 project_path.to_string_lossy().to_string(),
+                "resume".to_string(),
                 session_id.to_string(),
                 "-".to_string(),
             ]

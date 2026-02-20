@@ -28,6 +28,7 @@ pub enum SessionEngine {
     Codex,
     Claude,
     Gemini,
+    OpenCode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
