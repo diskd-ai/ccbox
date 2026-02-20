@@ -34,22 +34,22 @@ download_file() {
 
   if curl -fsSL -o "${out}" "${url}"; then
     return 0
-  fi
+  else
+    local code out_dir
+    code="$?"
+    out_dir="${out%/*}"
+    if [[ "${out_dir}" == "${out}" ]]; then
+      out_dir="."
+    fi
 
-  local code out_dir
-  code="$?"
-  out_dir="${out%/*}"
-  if [[ "${out_dir}" == "${out}" ]]; then
-    out_dir="."
-  fi
+    echo "error: download failed: ${url}" >&2
+    if [[ "${code}" -eq 23 ]]; then
+      echo "hint: curl write error. Check disk space and write permissions for: ${out_dir}" >&2
+      echo "hint: you can set CCBOX_TMP_DIR or TMPDIR to a directory with free space." >&2
+    fi
 
-  echo "error: download failed: ${url}" >&2
-  if [[ "${code}" -eq 23 ]]; then
-    echo "hint: curl write error. Check disk space and write permissions for: ${out_dir}" >&2
-    echo "hint: you can set CCBOX_TMP_DIR or TMPDIR to a directory with free space." >&2
+    return "${code}"
   fi
-
-  return "${code}"
 }
 
 install_binary() {
@@ -73,7 +73,7 @@ resolve_tag() {
 
   local tag
   tag="$(
-    curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+    curl -fsSL -o - "https://api.github.com/repos/${REPO}/releases/latest" \
       | grep -m1 '"tag_name"' \
       | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/'
   )"

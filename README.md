@@ -17,7 +17,7 @@ Prototype features:
 
 Quick install from GitHub Releases (macOS/Linux):
 ```sh
-curl -fsSL -H 'Cache-Control: no-cache' https://raw.githubusercontent.com/diskd-ai/ccbox/main/scripts/install.sh | /bin/bash
+curl -fsSL -H 'Cache-Control: no-cache' -o - https://raw.githubusercontent.com/diskd-ai/ccbox/main/scripts/install.sh | /bin/bash
 ```
 
 Homebrew (recommended):
