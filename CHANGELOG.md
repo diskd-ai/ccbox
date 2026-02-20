@@ -9,6 +9,20 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.11] - 2026-02-20
+
+### Changes
+
+- TUI: add an Engine menu (All/Codex/Claude/Gemini) to filter Projects and Sessions.
+- TUI: support multi-select + batch delete in Projects/Sessions/Tasks lists.
+- TUI: auto-refresh open Session Detail timelines when the log file changes.
+- TUI: allow pasting clipboard images into Task Create (Ctrl+V).
+- Docs: refresh README screenshots.
+
+### Fixes
+
+- TUI: avoid duplicate user prompts in timelines after aborted/retried turns.
+
 ## [0.1.10] - 2026-02-19
 
 ### Changes
