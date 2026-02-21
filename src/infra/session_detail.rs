@@ -291,29 +291,42 @@ fn detect_log_format(path: &Path) -> LogFormat {
 }
 
 fn looks_like_claude_jsonl(path: &Path) -> bool {
-    let Some(value) = read_first_jsonl_value(path) else {
-        return false;
-    };
-    let line_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    matches!(
-        line_type,
-        "user" | "assistant" | "summary" | "progress" | "file-history-snapshot"
-    )
+    for value in read_jsonl_values(path, 50) {
+        let line_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if matches!(
+            line_type,
+            "user" | "assistant" | "summary" | "progress" | "file-history-snapshot"
+        ) {
+            return true;
+        }
+    }
+    false
 }
 
-fn read_first_jsonl_value(path: &Path) -> Option<serde_json::Value> {
-    let file = File::open(path).ok()?;
+fn read_jsonl_values(path: &Path, limit: usize) -> Vec<serde_json::Value> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(_) => return Vec::new(),
+    };
     let reader = BufReader::new(file);
-    for line_result in reader.lines().take(20) {
-        let line = line_result.ok()?;
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for line_result in reader.lines().take(limit.saturating_mul(2)) {
+        let Ok(line) = line_result else {
+            break;
+        };
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let value: serde_json::Value = serde_json::from_str(trimmed).ok()?;
-        return Some(value);
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+        out.push(value);
+        if out.len() >= limit {
+            break;
+        }
     }
-    None
+    out
 }
 
 #[cfg(test)]
@@ -651,5 +664,41 @@ mod tests {
                 assert_eq!(error.kind(), io::ErrorKind::IsADirectory);
             }
         }
+    }
+
+    #[test]
+    fn loads_claude_timeline_when_queue_operation_precedes_messages() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+
+        let lines = [
+            serde_json::json!({
+                "type": "queue-operation",
+                "operation": "dequeue",
+                "timestamp": "2026-02-19T00:00:00Z",
+                "sessionId": "s1",
+            }),
+            serde_json::json!({
+                "type": "user",
+                "timestamp": "2026-02-19T00:00:01Z",
+                "message": { "content": "hello" }
+            }),
+        ];
+
+        let body = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, body).expect("write");
+
+        let timeline = load_session_timeline(&path).expect("load");
+        assert!(
+            timeline
+                .items
+                .iter()
+                .any(|item| item.kind == TimelineItemKind::User),
+            "expected Claude user item"
+        );
     }
 }
