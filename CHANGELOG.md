@@ -15,6 +15,7 @@ All notable user-facing changes to `ccbox` are documented in this file.
 - CLI: show a bright-green update hint on `projects`, `sessions`, and `history` when a newer version is available (stderr, pipe-friendly).
 - TUI: Sessions list can be filtered/sorted by tool failures (`Ctrl+X` tool-errors-only, `Ctrl+O` tool-errors-first).
 - Docs: add installable `ccbox-insights` skill documentation.
+- Docs: remove build-from-source `cargo` instructions from the README (production install uses Releases/Homebrew).
 
 ### Fixes
 

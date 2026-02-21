@@ -26,12 +26,7 @@ brew tap diskd-ai/ccbox
 brew install ccbox
 ```
 
-From source:
-```sh
-git clone https://github.com/diskd-ai/ccbox.git
-cd ccbox
-cargo install --path .
-```
+Developer build (from source): see `AGENTS.md`.
 
 ## Screenshots
 
