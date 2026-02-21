@@ -8,6 +8,14 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.21] - 2026-02-21
+
+### Changes
+
+- Docs: add detailed key feature descriptions and use cases (skill spans, timeline analysis, fork/resume, `ccbox-insights`).
+
+### Fixes
+
 ## [0.1.20] - 2026-02-21
 
 ### Changes

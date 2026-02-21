@@ -13,6 +13,65 @@ Prototype features:
 - Attach/detach to spawned `TTY` sessions (`a` to attach, `Ctrl-]` to detach)
 - Auto-rescans when session sources change (file watcher for Codex/Claude/Gemini/OpenCode)
 
+## Key features (what it’s for)
+
+### Skill spans (and loop detection)
+
+When an agent session activates a skill (for example a commit helper, design-doc generator, or an install workflow), `ccbox` detects the skill boundaries and overlays that context on the timeline:
+- **Visual overlay (TUI):** colored gutter markers show which timeline items happened “inside” which skill span; nested skills get their own span depth.
+- **Loop detection:** repeated consecutive invocations of the same top-level skill are flagged so you can spot “skill recursion” quickly.
+- **CLI export:** `ccbox skills` prints a per-skill summary (or `--json`) so other automation can reason over skill usage.
+
+Use cases:
+- “Why did this session burn tokens?”: see which skill dominated time/tool calls.
+- “Which skill caused the failures?”: attribute tool failures to the active skill context.
+- “Is a skill looping?”: catch repeated skill invocations early and adjust instructions/skills.
+
+How to use:
+- TUI: open a session → press `S` for the Skills overlay.
+- CLI: `ccbox skills [log|project] [session-id] --json` (use `--id` if you prefer flags).
+
+### Timeline analysis (TUI + CLI)
+
+The Session Detail timeline is the evidence trail of what happened: user requests, assistant output, tool calls, tool outputs, and token/stat markers (when available).
+
+Use cases:
+- Root-cause a failed run by replaying tool calls and their outputs.
+- Write a precise “what happened” report for teammates or incident notes.
+- Confirm what was actually executed (commands, files touched) without guessing.
+
+How to use:
+- TUI: open a session → `Tab` changes focus between timeline/details → `Enter` jumps Tool → ToolOut.
+- CLI: `ccbox history [log|project] [session-id] --full` for a complete, copy/paste-friendly timeline.
+
+### Fork/resume sessions (Codex)
+
+For Codex sessions, `ccbox` can fork/resume from a selected point in the timeline to create a new run with the same context up to that moment.
+
+Use cases:
+- “Try a different fix” from the same starting point without re-reading the whole session.
+- Continue after a bad turn or failed tool call with a clean branch.
+- Break a long session into smaller, more focused follow-up runs.
+
+How to use:
+- TUI: open a Codex session → select a Turn/User/Out/ToolOut item → press `f` (or use the Session menu).
+
+### ccbox-insights skill (code-insights)
+
+`ccbox-insights` is an installable agent skill that reads session history via `ccbox` (including optional skill-span context) and produces:
+- A “lessons learned” memo backed by evidence
+- A list of recurring failure patterns (invalid tool use vs runtime failures)
+- Copy-ready, additive instruction snippets for project `AGENTS.md` (and optional global rules)
+
+Use cases:
+- After a week of work, turn noisy session logs into better standing instructions.
+- Reduce repeated tool-call errors and avoid “clarify/correct” churn.
+- Save time and tokens by standardizing the workflows that actually worked.
+
+How to use:
+- Install: `npx skills add diskd-ai/ccbox --skill ccbox-insights --global --yes`
+- Prompt: “Use the ccbox-insights skill to analyze the latest N sessions for this project and propose AGENTS.md additions.”
+
 ## Install
 
 Quick install from GitHub Releases (macOS/Linux):
@@ -106,6 +165,10 @@ ccbox sessions "/path/to/project"
 ccbox history                      # defaults to latest session in current folder project
 ccbox history "/path/to/session.jsonl"
 ccbox history "/path/to/session.jsonl" --full
+ccbox skills                       # defaults to latest session in current folder project
+ccbox skills "/path/to/project"    # latest session in that project
+ccbox skills "/path/to/project" "SESSION_ID"
+ccbox skills --id "SESSION_ID" --json
 ccbox sessions --limit 50 --offset 0 --size
 ccbox history --limit 200 --offset 0 --full --size
 ccbox update
@@ -118,6 +181,7 @@ CLI details:
 - `sessions` output: `started_at_rfc3339<TAB>session_id<TAB>title<TAB>log_path` (newest-first; `--size` adds `file_size_bytes` before `log_path`)
 - `history` accepts a session `.jsonl` path or a **project directory**; if a directory is provided it selects that project’s latest session.
 - `history` prints a readable timeline; `--full` includes long details (tool calls/outputs, full messages); `--size` prints stats to stderr.
+- `skills` accepts a session `.jsonl` path or a **project directory**, plus an optional `session-id` (positional or `--id`); `--json` prints structured spans/loops.
 - Pipe-friendly output (handles broken pipes like `ccbox history | head`).
 - Parse warnings and “truncated” notices are printed to stderr.
 - On TUI start, `ccbox` checks for a newer GitHub Release in the background and shows a hint if one is available.
