@@ -274,6 +274,19 @@ fn parse_message_item(
     }
 
     if role == "user" && super::is_metadata_prompt(&joined) {
+        if let Some(skill_name) = super::extract_codex_skill_name(&joined) {
+            let detail = serde_json::json!({ "skill": skill_name }).to_string();
+            return ParsedLogLine::Item(TimelineItem {
+                kind: TimelineItemKind::ToolCall,
+                turn_id: current_turn_id.map(str::to_string),
+                call_id: None,
+                source_line_no: None,
+                timestamp,
+                timestamp_ms,
+                summary: "Skill()".to_string(),
+                detail,
+            });
+        }
         return ParsedLogLine::Ignore;
     }
     if role == "developer" {
@@ -319,6 +332,21 @@ fn parse_function_call(
         .unwrap_or("")
         .to_string();
 
+    let mut summary = format!("{name}()");
+    let mut detail = arguments;
+
+    if name == "skill" {
+        if let Ok(value) = serde_json::from_str::<Value>(&detail) {
+            if let Some(skill_name) = value.get("name").and_then(|v| v.as_str()) {
+                summary = "Skill()".to_string();
+                detail = serde_json::json!({ "skill": skill_name }).to_string();
+            }
+        }
+        if summary != "Skill()" {
+            summary = "Skill()".to_string();
+        }
+    }
+
     ParsedLogLine::Item(TimelineItem {
         kind: TimelineItemKind::ToolCall,
         turn_id: current_turn_id.map(str::to_string),
@@ -326,8 +354,8 @@ fn parse_function_call(
         source_line_no: None,
         timestamp,
         timestamp_ms,
-        summary: format!("{name}()"),
-        detail: arguments,
+        summary,
+        detail,
     })
 }
 
@@ -515,6 +543,80 @@ mod tests {
                 assert!(item.timestamp_ms.is_some());
                 assert_eq!(item.summary, "hello");
                 assert_eq!(item.detail, "hello\nworld");
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_codex_skill_injection_as_synthetic_skill_call() {
+        let json = serde_json::json!({
+            "timestamp": "2026-02-18T21:45:57.766Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "<skill>\n<name>ccbox</name>\n<path>/x/SKILL.md</path>\n</skill>"
+                }]
+            }
+        });
+
+        let parsed = parse_log_value(&json, Some("t1"));
+        match parsed {
+            ParsedLogLine::Item(item) => {
+                assert_eq!(item.kind, TimelineItemKind::ToolCall);
+                assert_eq!(item.turn_id.as_deref(), Some("t1"));
+                assert_eq!(item.summary, "Skill()");
+                assert_eq!(item.call_id, None);
+                assert!(item.detail.contains("\"skill\""));
+                assert!(item.detail.contains("ccbox"));
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn keeps_other_metadata_prompts_filtered() {
+        let json = serde_json::json!({
+            "timestamp": "2026-02-18T21:45:57.766Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "<environment_context>\n  <cwd>/x</cwd>\n</environment_context>"
+                }]
+            }
+        });
+
+        let parsed = parse_log_value(&json, Some("t1"));
+        assert_eq!(parsed, ParsedLogLine::Ignore);
+    }
+
+    #[test]
+    fn rewrites_opencode_skill_tool_call_to_unified_skill_call() {
+        let json = serde_json::json!({
+            "timestamp": "2026-02-18T21:45:57.766Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "skill",
+                "call_id": "call_1",
+                "arguments": "{\n  \"name\": \"ccbox\"\n}"
+            }
+        });
+
+        let parsed = parse_log_value(&json, Some("t1"));
+        match parsed {
+            ParsedLogLine::Item(item) => {
+                assert_eq!(item.kind, TimelineItemKind::ToolCall);
+                assert_eq!(item.summary, "Skill()");
+                assert_eq!(item.call_id.as_deref(), Some("call_1"));
+                assert!(item.detail.contains("\"skill\""));
+                assert!(item.detail.contains("ccbox"));
             }
             other => panic!("unexpected parse result: {other:?}"),
         }

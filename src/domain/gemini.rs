@@ -264,6 +264,18 @@ fn parse_tool_call(
     let args = value.get("args").unwrap_or(&Value::Null);
 
     let args_detail = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
+    let (summary, detail) = if name == "activate_skill" {
+        let skill_name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        (
+            "Skill()".to_string(),
+            serde_json::json!({ "skill": skill_name }).to_string(),
+        )
+    } else {
+        (format!("{name}()"), args_detail)
+    };
     items.push(TimelineItem {
         kind: TimelineItemKind::ToolCall,
         turn_id: None,
@@ -271,8 +283,8 @@ fn parse_tool_call(
         source_line_no: None,
         timestamp: timestamp.clone(),
         timestamp_ms,
-        summary: format!("{name}()"),
-        detail: args_detail,
+        summary,
+        detail,
     });
 
     if call_id.is_none() {
@@ -375,6 +387,34 @@ mod tests {
                 .iter()
                 .any(|i| i.kind == TimelineItemKind::TokenCount)
         );
+    }
+
+    #[test]
+    fn rewrites_activate_skill_to_unified_skill_call() {
+        let json = serde_json::json!({
+            "messages": [
+                {
+                    "type": "gemini",
+                    "timestamp": "2026-02-21T12:28:37.789Z",
+                    "id": "m1",
+                    "toolCalls": [
+                        {
+                            "id": "activate_skill_1",
+                            "name": "activate_skill",
+                            "args": { "name": "ccbox" },
+                            "result": { "status": "success" }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let parsed = parse_gemini_timeline_items(&json);
+        assert!(parsed.items.iter().any(|item| {
+            item.kind == TimelineItemKind::ToolCall
+                && item.summary == "Skill()"
+                && item.detail.contains("ccbox")
+        }));
     }
 
     #[test]

@@ -51,13 +51,23 @@ Return one JSON object per session:
   "session_type": "single_task | multi_task | iterative_refinement | exploration | quick_question",
   "outcome": "fully_achieved | mostly_achieved | partially_achieved | not_achieved | unclear_from_log",
   "user_satisfaction": "happy | satisfied | likely_satisfied | dissatisfied | frustrated | unsure",
+  "lessons_learned": [
+    {
+      "scope": "project | global",
+      "rule": "One sentence: what to do next time",
+      "why": "One sentence: why this rule exists",
+      "evidence": "1 short line copied from the log output",
+      "confidence": "low | medium | high"
+    }
+  ],
   "tool_groups_used": { "exec": 0, "edit": 0, "read": 0, "search": 0, "fetch": 0, "browser": 0, "other": 0 },
   "tool_failure_counts": { "category_name": 0 },
   "tool_failures": [
     {
       "tool": "exec | edit | read | search | fetch | browser | other | <raw tool name>",
       "category": "invalid_tool_input | tool_not_available | user_rejected_action | permission_denied | path_not_found | auth_or_secret_missing | network_error | timeout_or_hang | command_failed | conflicting_instructions | partial_or_truncated | wrong_tool_or_scope | unknown",
-      "evidence": "1 short line copied from the log output"
+      "evidence": "1 short line copied from the log output",
+      "skill_context": "Optional: active skill name if known (from `ccbox skills --json`)"
     }
   ],
   "root_cause_hypothesis": "One sentence; must be consistent with evidence",
@@ -71,4 +81,3 @@ Return one JSON object per session:
 - `tool_failure_counts`: count failures by taxonomy category.
 - If a single tool call produces multiple distinct failures (rare), prefer the earliest/root failure.
 - If the user declines a tool action, count it as `user_rejected_action` and capture the rejection phrase as evidence.
-

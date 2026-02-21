@@ -1,11 +1,13 @@
 ---
 name: ccbox-insights
-description: Analyze session logs with the ccbox CLI (projects/sessions/history) to identify erroneous tool calls and recurring tool failures, then propose additive instructions for AGENTS.md (project) and global agent instructions to prevent future call errors. Use when asked to run /ccbox:insights, diagnose tool-call errors, or improve agent UX with evidence-based recommendations.
+description: Summarize lessons learned from ccbox session logs (projects/sessions/history/skills) so the agent can do better next time. Produce copy-ready instruction updates (project + global) backed by evidence, with optional skill-span context to attribute failures to specific skills. Use when asked to run /ccbox:insights, generate a "lessons learned" memo, or propose standing instructions from session history.
 ---
 
 # ccbox-insights
 
-Use `ccbox` session logs to produce an evidence-based "insights" report focused on erroneous tool calls (failed commands, rejected actions, invalid tool inputs), plus copy-ready instruction snippets that reduce future failures.
+Use `ccbox` session logs to produce an evidence-based "lessons learned" memo for the agent (and humans), plus copy-ready instruction snippets that improve future sessions.
+
+Tool-call failures are an important signal, but the goal is broader than errors: capture what worked, what did not, and what should become standing behavior in the future.
 
 ## Requirements
 
@@ -41,6 +43,7 @@ Follow a staged pipeline: collect -> filter -> summarize -> label -> aggregate -
 - Project discovery: `ccbox projects`
 - Session listing: `ccbox sessions [project-path] --limit N --offset 0 --size`
 - Timeline capture: `ccbox history [log-or-project] --full --limit N --offset 0`
+- Skill spans (optional): `ccbox skills [log-or-project] --json`
 
 When triaging quickly, scan the timeline for failure signals (examples): `error`, `failed`, `non-zero`, `rejected`, `permission`, `timeout`.
 
@@ -55,6 +58,8 @@ If the timeline is too large to analyze in one pass, summarize in chunks:
 ### Stage 3: Extract per-session tool-call facets
 
 For each session in scope, produce one JSON object matching `references/facets.md`.
+
+If skill spans are available (via `ccbox skills --json`), annotate each failure with the active skill context when possible (e.g., "this failure happened inside the commit skill span").
 
 Hard rules:
 
@@ -90,12 +95,14 @@ Guidelines:
 
 Deliver:
 
-- A concise insights report (Markdown).
-- A proposed additive `AGENTS.md` snippet.
-- A separate proposed global snippet.
+- A concise lessons learned memo (Markdown), following `references/report.md`.
+- Proposed additive `AGENTS.md` snippet (project-level).
+- Proposed additive global instruction snippet.
+
+Optional (for future memory systems):
+- "AutoMemorial candidates": a short, structured list of rules that should become standing agent memory, each backed by evidence and scoped (project vs global).
 
 ## References
 
 - Facet schema + taxonomy: `references/facets.md`
 - Report template + instruction templates: `references/report.md`
-

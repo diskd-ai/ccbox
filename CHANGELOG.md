@@ -8,6 +8,17 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.19] - 2026-02-21
+
+### Changes
+
+- TUI: visualize active skill spans in Session Detail (colored gutter) and add a Skills overlay (`S`) to review spans and detected loops.
+- CLI: add `ccbox skills` to inspect skill spans/loops for a session log or project (table or `--json`).
+- Parsers: normalize skill activations across Codex/Gemini/OpenCode into a unified `Skill()` event to power span detection.
+- Skills: update `ccbox-insights` to focus on evidence-based lessons learned, with optional skill-context attribution.
+
+### Fixes
+
 ## [0.1.18] - 2026-02-21
 
 ### Changes

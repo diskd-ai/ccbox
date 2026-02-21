@@ -20,3 +20,15 @@ pub const ACCENT_BG: Color = Color::Rgb(44, 32, 16);
 pub const SUCCESS: Color = Color::Rgb(134, 239, 172); // light green (update hint, running indicator)
 pub const INFO: Color = Color::Rgb(125, 211, 252); // soft sky blue (secondary highlights)
 pub const ERROR: Color = Color::Rgb(248, 113, 113); // soft red
+
+// Skill span palette (stable mapping via hash(name) % 8).
+pub const SKILL_COLORS: [Color; 8] = [
+    Color::Rgb(96, 165, 250),  // blue
+    Color::Rgb(244, 114, 182), // pink
+    Color::Rgb(74, 222, 128),  // green
+    Color::Rgb(251, 191, 36),  // amber
+    Color::Rgb(167, 139, 250), // violet
+    Color::Rgb(45, 212, 191),  // teal
+    Color::Rgb(251, 146, 60),  // orange
+    Color::Rgb(248, 113, 113), // red
+];

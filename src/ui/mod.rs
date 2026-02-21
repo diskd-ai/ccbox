@@ -1,5 +1,6 @@
 use crate::app::{AppModel, DeleteConfirmSelection, EngineFilter, SessionDetailFocus, View};
-use crate::domain::{TimelineItem, TimelineItemKind, TurnContextSummary};
+use crate::domain::compute_skill_metrics;
+use crate::domain::{SkillLoop, SkillSpan, TimelineItem, TimelineItemKind, TurnContextSummary};
 use humansize::{DECIMAL, format_size};
 use ratatui::prelude::*;
 use ratatui::widgets::block::{BorderType, Title};
@@ -2579,6 +2580,23 @@ fn render_session_detail(
         short_id(&detail_view.session.meta.id),
         detail_view.session.meta.started_at_rfc3339
     );
+    let title_line = if !detail_view.skill_loops.is_empty() {
+        let count = detail_view.skill_loops.len();
+        let suffix = if count == 1 { "" } else { "s" };
+        let badge = format!("[! {count} skill loop{suffix} detected]");
+        Line::from(vec![
+            Span::raw(title.clone()),
+            Span::raw(" "),
+            Span::styled(
+                badge,
+                Style::default()
+                    .fg(theme::ERROR)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else {
+        Line::from(title.clone())
+    };
     let cwd = detail_view.session.meta.cwd.display().to_string();
     let file_name = detail_view
         .session
@@ -2597,7 +2615,7 @@ fn render_session_detail(
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::BORDER))
             .padding(Padding::horizontal(1))
-            .title(title)
+            .title(Title::from(title_line))
             .style(Style::default().bg(theme::SURFACE).fg(theme::FG)),
     );
     frame.render_widget(header, chunks[0]);
@@ -2663,12 +2681,23 @@ fn render_session_detail(
         &detail_view.items,
         &detail_view.session.meta.started_at_rfc3339,
     );
+
+    let skill_gutter = build_skill_gutter_colors(detail_view.items.len(), &detail_view.skill_spans);
     let list_items = detail_view
         .items
         .iter()
+        .enumerate()
         .zip(rows)
-        .map(|(item, cols)| {
-            timeline_list_item(item, cols, max_width, offset_col_width, duration_col_width)
+        .map(|((idx, item), cols)| {
+            let skill_color = skill_gutter.get(idx).copied().flatten();
+            timeline_list_item(
+                item,
+                cols,
+                max_width,
+                offset_col_width,
+                duration_col_width,
+                skill_color,
+            )
         })
         .collect::<Vec<_>>();
 
@@ -2789,7 +2818,10 @@ fn render_session_detail(
     );
     frame.render_widget(footer, chunks[2]);
 
-    if detail_view.context_overlay_open || detail_view.output_overlay_open {
+    if detail_view.context_overlay_open
+        || detail_view.output_overlay_open
+        || detail_view.skills_overlay_open
+    {
         dim_area(frame, frame.area());
     }
 
@@ -2799,6 +2831,10 @@ fn render_session_detail(
 
     if detail_view.output_overlay_open {
         render_last_output_overlay(frame, full_area, detail_view);
+    }
+
+    if detail_view.skills_overlay_open {
+        render_skill_summary_overlay(frame, full_area, detail_view);
     }
 }
 
@@ -2812,7 +2848,7 @@ fn session_detail_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let mut parts = vec![
-        "Keys: Tab=focus  arrows=move/scroll  PgUp/PgDn=page  Enter=ToolOut (Tool)  f=fork  o=result  F3=stats  Ctrl+E/Cmd+E=rename  Ctrl+P/Cmd+P=move  c=context  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+        "Keys: Tab=focus  arrows=move/scroll  PgUp/PgDn=page  Enter=ToolOut (Tool)  f=fork  o=result  F3=stats  Ctrl+E/Cmd+E=rename  Ctrl+P/Cmd+P=move  c=context  S=skills  Esc/Backspace=back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
             .to_string(),
         format!("items: {item_count}"),
     ];
@@ -3014,18 +3050,60 @@ fn format_commas_usize(value: usize) -> String {
     format_commas_u64(value as u64)
 }
 
+fn build_skill_gutter_colors(item_count: usize, spans: &[SkillSpan]) -> Vec<Option<Color>> {
+    let mut out = vec![None; item_count];
+    if item_count == 0 {
+        return out;
+    }
+
+    let last_idx = item_count.saturating_sub(1);
+    for span in spans {
+        let color = skill_color_for_name(&span.name);
+        let start = span.start_idx.saturating_add(1);
+        let end = span.end_idx.unwrap_or(last_idx).min(last_idx);
+        if start > end {
+            continue;
+        }
+        for idx in start..=end {
+            if idx < out.len() {
+                out[idx] = Some(color);
+            }
+        }
+    }
+
+    out
+}
+
+fn skill_color_for_name(name: &str) -> Color {
+    if name.is_empty() {
+        return theme::SKILL_COLORS[0];
+    }
+
+    // Stable 64-bit FNV-1a hash.
+    let mut hash: u64 = 14695981039346656037;
+    for &byte in name.as_bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(1099511628211);
+    }
+
+    let idx = (hash % (theme::SKILL_COLORS.len() as u64)) as usize;
+    theme::SKILL_COLORS[idx]
+}
+
 fn timeline_list_item(
     item: &TimelineItem,
     cols: TimelineRowColumns,
     max_width: usize,
     offset_col_width: usize,
     duration_col_width: usize,
+    skill_color: Option<Color>,
 ) -> ListItem<'static> {
     if max_width == 0 {
         return ListItem::new(Line::from(""));
     }
 
     const KIND_WIDTH: usize = 6;
+    const GUTTER_WIDTH: usize = 2;
     let label_raw = kind_label(item.kind);
     let label = pad_right(label_raw, KIND_WIDTH);
     let label_width = UnicodeWidthStr::width(label.as_str());
@@ -3033,18 +3111,20 @@ fn timeline_list_item(
     let column_sep = "  ·  ";
     let right_width = offset_col_width + UnicodeWidthStr::width(column_sep) + duration_col_width;
 
-    let left_prefix_width = label_width + UnicodeWidthStr::width("  ");
+    let left_prefix_width = GUTTER_WIDTH + label_width + UnicodeWidthStr::width("  ");
     let min_left = left_prefix_width.saturating_add(4);
     let gap = 2usize;
     if right_width + gap + min_left >= max_width {
-        let content = format!("{label_raw}  {}", item.summary);
+        let gutter = if skill_color.is_some() { "| " } else { "  " };
+        let content = format!("{gutter}{label_raw}  {}", item.summary);
         return ListItem::new(Line::from(truncate_end(&content, max_width)));
     }
 
     let left_available = max_width.saturating_sub(right_width + gap);
     if left_available <= left_prefix_width {
+        let gutter = if skill_color.is_some() { "| " } else { "  " };
         return ListItem::new(Line::from(vec![Span::styled(
-            truncate_end(&label, max_width),
+            truncate_end(&format!("{gutter}{label}"), max_width),
             kind_style(item.kind),
         )]));
     }
@@ -3055,7 +3135,27 @@ fn timeline_list_item(
     let left_width = left_prefix_width + summary_width;
     let padding_width = max_width.saturating_sub(left_width + right_width);
 
+    let mut left_spans: Vec<Span<'static>> = Vec::new();
+    match skill_color {
+        Some(color) => {
+            left_spans.push(Span::styled(
+                "|".to_string(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ));
+            left_spans.push(Span::raw(" "));
+        }
+        None => {
+            left_spans.push(Span::raw("  "));
+        }
+    }
+
     ListItem::new(Line::from(vec![
+        left_spans[0].clone(),
+        if left_spans.len() > 1 {
+            left_spans[1].clone()
+        } else {
+            Span::raw("")
+        },
         Span::styled(label, kind_style(item.kind)),
         Span::raw("  "),
         Span::raw(summary),
@@ -3774,6 +3874,208 @@ fn render_last_output_overlay(
                 .title("Result (last Out) · Esc/Enter=close · arrows/PgUp/PgDn=scroll"),
         );
     frame.render_widget(paragraph, popup);
+}
+
+fn render_skill_summary_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    detail_view: &crate::app::SessionDetailView,
+) {
+    let popup = centered_rect(82, 68, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
+        .padding(Padding::horizontal(1))
+        .title("Skills · Esc=close · arrows/PgUp/PgDn=scroll")
+        .style(Style::default().bg(theme::SURFACE).fg(theme::FG));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let spans = &detail_view.skill_spans;
+    let loops = &detail_view.skill_loops;
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    if spans.is_empty() {
+        lines.push(Line::from("No skill spans detected."));
+    } else {
+        let loop_count = loops.len();
+        let loop_suffix = if loop_count == 1 { "" } else { "s" };
+        lines.push(Line::from(format!(
+            "Skill spans: {} detected, {loop_count} loop{loop_suffix}",
+            spans.len()
+        )));
+        lines.push(Line::from(""));
+
+        let header_style = Style::default()
+            .fg(theme::ACCENT)
+            .add_modifier(Modifier::BOLD);
+        let dim_style = Style::default().fg(theme::DIM);
+
+        lines.push(Line::from(vec![
+            Span::styled("#", header_style),
+            Span::raw("  "),
+            Span::styled("Skill", header_style),
+            Span::raw("                     "),
+            Span::styled("Depth", header_style),
+            Span::raw("  "),
+            Span::styled("Tools", header_style),
+            Span::raw("  "),
+            Span::styled("Duration", header_style),
+            Span::raw("  "),
+            Span::styled("Output", header_style),
+        ]));
+        lines.push(Line::from(Span::styled(
+            "-".repeat((inner.width as usize).saturating_sub(2)),
+            dim_style,
+        )));
+
+        let metrics = spans
+            .iter()
+            .map(|span| compute_skill_metrics(span, &detail_view.items))
+            .collect::<Vec<_>>();
+
+        for (idx, span) in spans.iter().enumerate() {
+            let m = metrics.get(idx).cloned().unwrap_or_default();
+            let duration = format_duration_ms(m.duration_ms);
+            let loop_note = loop_note_for_span(idx, loops);
+            let name = if let Some(note) = loop_note {
+                format!("{} {note}", span.name)
+            } else {
+                span.name.clone()
+            };
+
+            let row = format!(
+                "{:>2}  {:<24} {:>5}  {:>5}  {:>8}  {:>10}",
+                idx.saturating_add(1),
+                truncate_end(&name, 24),
+                span.depth,
+                m.tool_calls,
+                duration,
+                format!("{} chars", format_commas_usize(m.output_chars))
+            );
+            lines.push(Line::from(row));
+        }
+
+        if !loops.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("Loops ({loop_count}):"),
+                header_style,
+            )));
+            for entry in loops {
+                let indices = entry
+                    .span_indices
+                    .iter()
+                    .map(|idx| idx.saturating_add(1).to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let count = entry.span_indices.len();
+                lines.push(Line::from(format!(
+                    "- \"{}\" invoked {count}x consecutively (spans {indices})",
+                    entry.name
+                )));
+            }
+        }
+
+        let session_duration_ms = session_duration_ms(&detail_view.items);
+        let total_skill_ms = total_top_level_skill_duration_ms(spans, &metrics);
+
+        if let Some(session_ms) = session_duration_ms {
+            if session_ms > 0 {
+                let pct = (total_skill_ms as f64 / session_ms as f64) * 100.0;
+                lines.push(Line::from(""));
+                lines.push(Line::from(format!(
+                    "Skill time: {} / {} session ({:.1}%)",
+                    format_duration(Duration::from_millis(
+                        u64::try_from(total_skill_ms.max(0)).unwrap_or(0)
+                    )),
+                    format_duration(Duration::from_millis(
+                        u64::try_from(session_ms.max(0)).unwrap_or(0)
+                    )),
+                    pct
+                )));
+            }
+        }
+    }
+
+    let text = Text::from(lines);
+    let paragraph = Paragraph::new(text.clone()).wrap(Wrap { trim: false });
+    let total_lines = paragraph.line_count(inner.width);
+    let viewport = inner.height as usize;
+    let max_scroll = total_lines.saturating_sub(viewport);
+    let scroll = (detail_view.skills_overlay_scroll as usize).min(max_scroll);
+    let scroll_u16 = u16::try_from(scroll).unwrap_or(u16::MAX);
+    let paragraph = Paragraph::new(text)
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_u16, 0));
+    frame.render_widget(paragraph, inner);
+
+    if total_lines > viewport && viewport > 0 {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .thumb_style(Style::default().fg(theme::FG))
+            .track_style(Style::default().fg(theme::BORDER))
+            .begin_style(Style::default().fg(theme::FG))
+            .end_style(Style::default().fg(theme::FG));
+        let content_length = max_scroll.saturating_add(1);
+        let mut state = ScrollbarState::new(content_length)
+            .position(scroll)
+            .viewport_content_length(viewport);
+        frame.render_stateful_widget(
+            scrollbar,
+            popup.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut state,
+        );
+    }
+}
+
+fn loop_note_for_span(span_idx: usize, loops: &[SkillLoop]) -> Option<String> {
+    for entry in loops {
+        if entry.span_indices.contains(&span_idx) {
+            let count = entry.span_indices.len();
+            return Some(format!("[loop x{count}]"));
+        }
+    }
+    None
+}
+
+fn session_duration_ms(items: &[TimelineItem]) -> Option<i64> {
+    let min_ts = items.iter().filter_map(|item| item.timestamp_ms).min()?;
+    let max_ts = items.iter().filter_map(|item| item.timestamp_ms).max()?;
+    max_ts.checked_sub(min_ts)
+}
+
+fn total_top_level_skill_duration_ms(
+    spans: &[SkillSpan],
+    metrics: &[crate::domain::SkillMetrics],
+) -> i64 {
+    let mut total: i64 = 0;
+    for (span, metric) in spans.iter().zip(metrics.iter()) {
+        if span.depth != 0 {
+            continue;
+        }
+        if let Some(ms) = metric.duration_ms {
+            if ms > 0 {
+                total = total.saturating_add(ms);
+            }
+        }
+    }
+    total
+}
+
+fn format_duration_ms(ms: Option<i64>) -> String {
+    let Some(ms) = ms else {
+        return "-".to_string();
+    };
+    if ms < 0 {
+        return "-".to_string();
+    }
+    format_duration(Duration::from_millis(u64::try_from(ms).unwrap_or(0)))
 }
 
 fn render_session_result_preview_overlay(
@@ -4629,6 +4931,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
             "  - Session Detail: f forks/resumes from selected Turn/User/Out/ToolOut record (Codex)",
         ),
         Line::from("  - Session Detail: c toggles Visible Context"),
+        Line::from("  - Session Detail: S toggles Skills summary"),
         Line::from("  - Processes: a=attach (TTY), s/e/l=open output, k=kill, Enter=open session"),
         Line::from(""),
         Line::from("Help"),

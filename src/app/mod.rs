@@ -6,8 +6,8 @@ mod text_editor;
 use crate::app::fork::{default_fork_prompt, fork_context_from_timeline_item};
 use crate::domain::{
     AgentEngine, ForkContext, ProjectIndex, ProjectSummary, SessionEngine, SessionStats,
-    SessionSummary, SpawnIoMode, Task, TaskId, TaskImage, TimelineItem, TimelineItemKind,
-    TurnContextSummary, index_projects,
+    SessionSummary, SkillLoop, SkillSpan, SpawnIoMode, Task, TaskId, TaskImage, TimelineItem,
+    TimelineItemKind, TurnContextSummary, detect_skill_loops, detect_skill_spans, index_projects,
 };
 use crate::infra::{ScanWarningCount, SessionIndex};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
@@ -455,6 +455,8 @@ impl AppModel {
         warnings: usize,
         truncated: bool,
     ) -> Self {
+        let skill_spans = detect_skill_spans(&items);
+        let skill_loops = detect_skill_loops(&skill_spans);
         let last_output = items
             .iter()
             .rev()
@@ -486,6 +488,8 @@ impl AppModel {
                 from_sessions,
                 session,
                 items,
+                skill_spans,
+                skill_loops,
                 turn_contexts,
                 warnings,
                 truncated,
@@ -496,6 +500,8 @@ impl AppModel {
                 last_output: last_output.clone(),
                 output_overlay_open: false,
                 output_overlay_scroll: 0,
+                skills_overlay_open: false,
+                skills_overlay_scroll: 0,
             }),
         }
     }
@@ -977,7 +983,7 @@ pub const MAIN_MENU_NEW_SESSION_ITEMS: [MainMenuEntry; 4] = [
     },
 ];
 
-pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 9] = [
+pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 10] = [
     MainMenuEntry {
         label: "Jump Tool -> ToolOut",
         hotkey: "Enter",
@@ -1039,6 +1045,14 @@ pub const MAIN_MENU_SESSION_ITEMS: [MainMenuEntry; 9] = [
         hotkey: "c",
         key: MainMenuKey {
             code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Skills",
+        hotkey: "S",
+        key: MainMenuKey {
+            code: KeyCode::Char('S'),
             modifiers: KeyModifiers::NONE,
         },
     },
@@ -1671,6 +1685,8 @@ pub struct SessionDetailView {
     pub from_sessions: SessionsView,
     pub session: SessionSummary,
     pub items: Vec<TimelineItem>,
+    pub skill_spans: Vec<SkillSpan>,
+    pub skill_loops: Vec<SkillLoop>,
     pub turn_contexts: BTreeMap<String, TurnContextSummary>,
     pub warnings: usize,
     pub truncated: bool,
@@ -1681,6 +1697,8 @@ pub struct SessionDetailView {
     pub last_output: Option<String>,
     pub output_overlay_open: bool,
     pub output_overlay_scroll: u16,
+    pub skills_overlay_open: bool,
+    pub skills_overlay_scroll: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -5049,6 +5067,35 @@ fn update_session_detail(
         return (model, AppCommand::None);
     }
 
+    if view.skills_overlay_open {
+        match key.code {
+            KeyCode::Esc | KeyCode::Backspace => {
+                view.skills_overlay_open = false;
+            }
+            KeyCode::Up => {
+                view.skills_overlay_scroll = view.skills_overlay_scroll.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                view.skills_overlay_scroll = view.skills_overlay_scroll.saturating_add(1);
+            }
+            KeyCode::PageUp => {
+                let step = page_step_standard_list(model.terminal_size) as u16;
+                view.skills_overlay_scroll = view.skills_overlay_scroll.saturating_sub(step);
+            }
+            KeyCode::PageDown => {
+                let step = page_step_standard_list(model.terminal_size) as u16;
+                view.skills_overlay_scroll = view.skills_overlay_scroll.saturating_add(step);
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                view.skills_overlay_open = false;
+            }
+            _ => {}
+        }
+
+        model.view = View::SessionDetail(view);
+        return (model, AppCommand::None);
+    }
+
     match key.code {
         KeyCode::Tab | KeyCode::BackTab => {
             view.focus = view.focus.toggle();
@@ -5196,6 +5243,12 @@ fn update_session_detail(
         }
         KeyCode::Char('c') => {
             view.context_overlay_open = !view.context_overlay_open;
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') => {
+            view.skills_overlay_open = !view.skills_overlay_open;
+            if view.skills_overlay_open {
+                view.skills_overlay_scroll = 0;
+            }
         }
         _ => {}
     }

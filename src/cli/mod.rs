@@ -1,9 +1,10 @@
 use crate::domain::{
-    ProjectSummary, SessionEngine, TimelineItem, TimelineItemKind, index_projects,
+    ProjectSummary, SessionEngine, TimelineItem, TimelineItemKind, compute_skill_metrics,
+    detect_skill_loops, detect_skill_spans, index_projects,
 };
 use crate::infra::{LoadSessionTimelineError, load_session_timeline, scan_all_sessions};
 use std::fs;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -39,6 +40,12 @@ pub enum CliCommand {
         limit: usize,
         full: bool,
         size: bool,
+    },
+    Skills {
+        log_path: Option<PathBuf>,
+        engine: Option<SessionEngine>,
+        json: bool,
+        full: bool,
     },
     Update,
 }
@@ -239,6 +246,46 @@ pub fn parse_invocation(args: &[String]) -> Result<CliInvocation, CliParseError>
                 limit,
                 full,
                 size,
+            }))
+        }
+        "skills" => {
+            let mut json = false;
+            let mut full = false;
+            let mut log_path: Option<PathBuf> = None;
+            let mut engine: Option<SessionEngine> = global_engine;
+
+            let mut args = iter.peekable();
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--json" => {
+                        json = true;
+                    }
+                    "--full" => {
+                        full = true;
+                    }
+                    "--engine" | "-e" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--engine".to_string())
+                        })?;
+                        engine = parse_engine_flag("--engine", value)?;
+                    }
+                    _ if arg.starts_with('-') => {
+                        return Err(CliParseError::UnknownFlag(arg.to_string()));
+                    }
+                    _ => {
+                        if log_path.is_some() {
+                            return Err(CliParseError::UnexpectedArgument(arg.to_string()));
+                        }
+                        log_path = Some(PathBuf::from(arg));
+                    }
+                }
+            }
+
+            Ok(CliInvocation::Command(CliCommand::Skills {
+                log_path,
+                engine,
+                json,
+                full,
             }))
         }
         "update" => {
@@ -575,6 +622,46 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
             update_notice.write_hint(&mut err)?;
             Ok(())
         }
+        CliCommand::Skills {
+            log_path,
+            engine,
+            json,
+            full,
+        } => {
+            let log_path =
+                resolve_history_log_path(sessions_dir, &mut err, log_path, None, engine)?;
+            let timeline = load_session_timeline(&log_path)?;
+
+            let spans = detect_skill_spans(&timeline.items);
+            let loops = detect_skill_loops(&spans);
+            let metrics = spans
+                .iter()
+                .map(|span| compute_skill_metrics(span, &timeline.items))
+                .collect::<Vec<_>>();
+
+            if json {
+                let payload =
+                    build_skills_json_payload(&log_path, &timeline.items, &spans, &loops, &metrics);
+                let rendered =
+                    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
+                if !write_line(&mut out, &rendered)? {
+                    return Ok(());
+                }
+            } else {
+                print_skills_human(&mut out, &timeline.items, &spans, &loops, &metrics, full)?;
+            }
+
+            if timeline.warnings > 0
+                && !write_line(&mut err, &format!("warnings: {}", timeline.warnings))?
+            {
+                return Ok(());
+            }
+            if timeline.truncated && !write_line(&mut err, "truncated: true")? {
+                return Ok(());
+            }
+            update_notice.write_hint(&mut err)?;
+            Ok(())
+        }
         CliCommand::Update => match crate::infra::self_update()? {
             Some(update) => {
                 let line = format!("updated:\tv{}\t->\t{}", update.current, update.latest_tag);
@@ -588,6 +675,331 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
             }
         },
     }
+}
+
+fn print_skills_human(
+    out: &mut impl Write,
+    items: &[TimelineItem],
+    spans: &[crate::domain::SkillSpan],
+    loops: &[crate::domain::SkillLoop],
+    metrics: &[crate::domain::SkillMetrics],
+    full: bool,
+) -> Result<(), CliRunError> {
+    if spans.is_empty() {
+        write_line(out, "No skill spans detected.")?;
+        return Ok(());
+    }
+
+    let loop_count = loops.len();
+    let loop_suffix = if loop_count == 1 { "" } else { "s" };
+    write_line(
+        out,
+        &format!(
+            "Skill spans: {} detected, {loop_count} loop{loop_suffix}",
+            spans.len()
+        ),
+    )?;
+    write_line(out, "")?;
+
+    write_line(
+        out,
+        "  #  Skill                     Depth  Tools  Duration  Output",
+    )?;
+    for (idx, span) in spans.iter().enumerate() {
+        let m = metrics.get(idx).cloned().unwrap_or_default();
+        let duration = format_duration_ms(m.duration_ms);
+        let output = format!("{} chars", format_commas_usize(m.output_chars));
+        let loop_note = loop_note_for_span(idx, loops);
+        let name = if let Some(note) = loop_note {
+            format!("{} {note}", span.name)
+        } else {
+            span.name.clone()
+        };
+
+        write_line(
+            out,
+            &format!(
+                "  {:>2}  {:<24} {:>5}  {:>5}  {:>8}  {:>10}",
+                idx.saturating_add(1),
+                truncate_end(&name, 24),
+                span.depth,
+                m.tool_calls,
+                duration,
+                output,
+            ),
+        )?;
+
+        if full {
+            let tool_calls = tool_call_summaries_for_span(span, items);
+            if !tool_calls.is_empty() {
+                write_line(out, &format!("      tools: {}", tool_calls.join(", ")))?;
+            }
+        }
+    }
+
+    if !loops.is_empty() {
+        write_line(out, "")?;
+        write_line(out, "Loops:")?;
+        for entry in loops {
+            let count = entry.span_indices.len();
+            let indices = entry
+                .span_indices
+                .iter()
+                .map(|idx| idx.saturating_add(1).to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            write_line(
+                out,
+                &format!(
+                    "  - \"{}\" invoked {count}x consecutively (spans {indices})",
+                    entry.name
+                ),
+            )?;
+        }
+    }
+
+    let session_ms = session_duration_ms(items);
+    let total_skill_ms = total_top_level_skill_duration_ms(spans, metrics);
+    if let Some(session_ms) = session_ms {
+        if session_ms > 0 {
+            let pct = (total_skill_ms as f64 / session_ms as f64) * 100.0;
+            write_line(out, "")?;
+            write_line(
+                out,
+                &format!(
+                    "Skill time: {} / {} session ({:.1}%)",
+                    format_duration_ms(Some(total_skill_ms)),
+                    format_duration_ms(Some(session_ms)),
+                    pct
+                ),
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn build_skills_json_payload(
+    log_path: &Path,
+    items: &[TimelineItem],
+    spans: &[crate::domain::SkillSpan],
+    loops: &[crate::domain::SkillLoop],
+    metrics: &[crate::domain::SkillMetrics],
+) -> serde_json::Value {
+    let session_id = infer_session_id(log_path);
+    let session_duration_ms = session_duration_ms(items);
+    let total_skill_duration_ms = total_top_level_skill_duration_ms(spans, metrics);
+    let skill_time_pct = session_duration_ms.and_then(|session_ms| {
+        if session_ms > 0 {
+            Some((total_skill_duration_ms as f64 / session_ms as f64) * 100.0)
+        } else {
+            None
+        }
+    });
+
+    let spans_json = spans
+        .iter()
+        .enumerate()
+        .map(|(idx, span)| {
+            let m = metrics.get(idx).cloned().unwrap_or_default();
+            serde_json::json!({
+                "name": span.name.clone(),
+                "depth": span.depth,
+                "start_idx": span.start_idx,
+                "end_idx": span.end_idx,
+                "tool_calls": m.tool_calls,
+                "duration_ms": m.duration_ms,
+                "output_chars": m.output_chars,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let loops_json = loops
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "name": entry.name.clone(),
+                "count": entry.span_indices.len(),
+                "span_indices": entry.span_indices.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "session_id": session_id,
+        "spans": spans_json,
+        "loops": loops_json,
+        "summary": {
+            "total_spans": spans.len(),
+            "total_skill_duration_ms": total_skill_duration_ms,
+            "session_duration_ms": session_duration_ms,
+            "skill_time_pct": skill_time_pct,
+        }
+    })
+}
+
+fn infer_session_id(log_path: &Path) -> String {
+    if let Some(id) = extract_session_id_from_session_meta(log_path) {
+        return id;
+    }
+
+    log_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| log_path.display().to_string())
+}
+
+fn extract_session_id_from_session_meta(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let reader = io::BufReader::new(file);
+    for line_result in reader.lines().take(200) {
+        let line = line_result.ok()?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.contains("\"type\":\"session_meta\"")
+            || trimmed.contains("\"type\": \"session_meta\"")
+        {
+            if let Ok(meta) = crate::domain::parse_session_meta_line(trimmed) {
+                return Some(meta.id);
+            }
+        }
+    }
+    None
+}
+
+fn session_duration_ms(items: &[TimelineItem]) -> Option<i64> {
+    let min_ts = items.iter().filter_map(|item| item.timestamp_ms).min()?;
+    let max_ts = items.iter().filter_map(|item| item.timestamp_ms).max()?;
+    max_ts.checked_sub(min_ts)
+}
+
+fn total_top_level_skill_duration_ms(
+    spans: &[crate::domain::SkillSpan],
+    metrics: &[crate::domain::SkillMetrics],
+) -> i64 {
+    let mut total: i64 = 0;
+    for (span, metric) in spans.iter().zip(metrics.iter()) {
+        if span.depth != 0 {
+            continue;
+        }
+        if let Some(ms) = metric.duration_ms {
+            if ms > 0 {
+                total = total.saturating_add(ms);
+            }
+        }
+    }
+    total
+}
+
+fn format_duration_ms(ms: Option<i64>) -> String {
+    let Some(ms) = ms else {
+        return "-".to_string();
+    };
+    if ms < 0 {
+        return "-".to_string();
+    }
+    let value = u64::try_from(ms).unwrap_or(0);
+    format_duration(Duration::from_millis(value))
+}
+
+fn loop_note_for_span(span_idx: usize, loops: &[crate::domain::SkillLoop]) -> Option<String> {
+    for entry in loops {
+        if entry.span_indices.contains(&span_idx) {
+            let count = entry.span_indices.len();
+            return Some(format!("[loop x{count}]"));
+        }
+    }
+    None
+}
+
+fn tool_call_summaries_for_span(
+    span: &crate::domain::SkillSpan,
+    items: &[TimelineItem],
+) -> Vec<String> {
+    if items.is_empty() || span.start_idx >= items.len() {
+        return Vec::new();
+    }
+
+    let mut end_idx = span
+        .end_idx
+        .unwrap_or_else(|| items.len().saturating_sub(1));
+    end_idx = end_idx.min(items.len().saturating_sub(1));
+    if end_idx <= span.start_idx {
+        return Vec::new();
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    for item in items
+        .iter()
+        .take(end_idx.saturating_add(1))
+        .skip(span.start_idx.saturating_add(1))
+    {
+        if item.kind == TimelineItemKind::ToolCall {
+            out.push(item.summary.clone());
+        }
+    }
+    if out.len() > 12 {
+        let remaining = out.len().saturating_sub(12);
+        out.truncate(12);
+        out.push(format!("... (+{remaining} more)"));
+    }
+    out
+}
+
+fn truncate_end(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    for ch in text.chars() {
+        let next = format!("{out}{ch}");
+        if unicode_width::UnicodeWidthStr::width(next.as_str()) > width {
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn format_duration(duration: Duration) -> String {
+    let total_ms = duration.as_millis() as u64;
+    if total_ms < 1000 {
+        return format!("{total_ms}ms");
+    }
+    if total_ms < 10_000 {
+        let seconds = total_ms / 1000;
+        let tenths = (total_ms % 1000) / 100;
+        return format!("{seconds}.{tenths}s");
+    }
+    if total_ms < 60_000 {
+        let seconds = total_ms / 1000;
+        return format!("{seconds}s");
+    }
+    if total_ms < 3_600_000 {
+        let total_s = total_ms / 1000;
+        let minutes = total_s / 60;
+        let seconds = total_s % 60;
+        return format!("{minutes}m {seconds:02}s");
+    }
+
+    let total_m = total_ms / 60_000;
+    let hours = total_m / 60;
+    let minutes = total_m % 60;
+    format!("{hours}h {minutes:02}m")
+}
+
+fn format_commas_usize(value: usize) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (count, ch) in digits.chars().rev().enumerate() {
+        if count > 0 && count % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
 }
 
 fn load_projects(
@@ -1109,6 +1521,43 @@ mod tests {
                 limit: DEFAULT_LIMIT,
                 full: false,
                 size: false
+            })
+        );
+    }
+
+    #[test]
+    fn parse_skills_defaults_to_current_dir_session() {
+        let parsed = parse_invocation(&args(&["ccbox", "skills"])).expect("parse");
+        assert_eq!(
+            parsed,
+            CliInvocation::Command(CliCommand::Skills {
+                log_path: None,
+                engine: None,
+                json: false,
+                full: false
+            })
+        );
+    }
+
+    #[test]
+    fn parse_skills_accepts_json_full_engine_and_path() {
+        let parsed = parse_invocation(&args(&[
+            "ccbox",
+            "skills",
+            "--json",
+            "--full",
+            "--engine",
+            "claude",
+            "/tmp/project",
+        ]))
+        .expect("parse");
+        assert_eq!(
+            parsed,
+            CliInvocation::Command(CliCommand::Skills {
+                log_path: Some(PathBuf::from("/tmp/project")),
+                engine: Some(SessionEngine::Claude),
+                json: true,
+                full: true
             })
         );
     }
