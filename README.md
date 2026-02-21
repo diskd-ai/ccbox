@@ -138,6 +138,16 @@ This repo ships agent skills:
 - `ccbox`: inspect local session logs using the `ccbox` CLI (`projects`, `sessions`, `history`)
 - `ccbox-insights`: analyze tool-call failures in session logs and propose additive instructions (project `AGENTS.md` + global)
 
+Install the code-insights skill (`ccbox-insights`):
+
+```bash
+npx skills add diskd-ai/ccbox --skill ccbox-insights --global --yes
+```
+
+Analyzes unsuccessful tool calls and suggests additive fixes in `AGENTS.md` (project-level).
+
+Helps save time and tokens.
+
 Install one or both:
 
 ```bash

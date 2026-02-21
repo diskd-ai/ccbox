@@ -30,6 +30,7 @@ This skill helps an agent:
 ## Requirements
 
 * `ccbox` on your `$PATH`.
+* Keep it up to date: run `ccbox update` (prints `up-to-date:` or `updated:`; self-update is supported on macOS/Linux).
 * Local access to the Codex sessions directory:
   * `CODEX_SESSIONS_DIR` (preferred override), or
   * default `~/.codex/sessions`

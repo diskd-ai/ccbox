@@ -8,6 +8,17 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.20] - 2026-02-21
+
+### Changes
+
+- CLI: `ccbox skills` can target a specific session id (positional or `--id`) to print skill spans for that session.
+- Skills: `ccbox` and `ccbox-insights` docs now recommend running `ccbox update` to ensure analysis matches the latest CLI behavior.
+- Insights: add guidance and schema fields for analyzing user clarifications/corrections and interrupted sessions (course-corrections).
+- Docs: README now includes a short install blurb for `ccbox-insights` (code-insights) and what it does.
+
+### Fixes
+
 ## [0.1.19] - 2026-02-21
 
 ### Changes

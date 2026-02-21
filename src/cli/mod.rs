@@ -43,6 +43,7 @@ pub enum CliCommand {
     },
     Skills {
         log_path: Option<PathBuf>,
+        session_id: Option<String>,
         engine: Option<SessionEngine>,
         json: bool,
         full: bool,
@@ -252,6 +253,7 @@ pub fn parse_invocation(args: &[String]) -> Result<CliInvocation, CliParseError>
             let mut json = false;
             let mut full = false;
             let mut log_path: Option<PathBuf> = None;
+            let mut session_id: Option<String> = None;
             let mut engine: Option<SessionEngine> = global_engine;
 
             let mut args = iter.peekable();
@@ -269,20 +271,35 @@ pub fn parse_invocation(args: &[String]) -> Result<CliInvocation, CliParseError>
                         })?;
                         engine = parse_engine_flag("--engine", value)?;
                     }
+                    "--id" | "--session-id" => {
+                        let value = args
+                            .next()
+                            .ok_or_else(|| CliParseError::MissingFlagValue("--id".to_string()))?;
+                        session_id = Some((*value).to_string());
+                    }
                     _ if arg.starts_with('-') => {
                         return Err(CliParseError::UnknownFlag(arg.to_string()));
                     }
                     _ => {
-                        if log_path.is_some() {
+                        if looks_like_path(arg) {
+                            if log_path.is_some() {
+                                return Err(CliParseError::UnexpectedArgument(arg.to_string()));
+                            }
+                            log_path = Some(PathBuf::from(arg));
+                            continue;
+                        }
+
+                        if session_id.is_some() {
                             return Err(CliParseError::UnexpectedArgument(arg.to_string()));
                         }
-                        log_path = Some(PathBuf::from(arg));
+                        session_id = Some((*arg).to_string());
                     }
                 }
             }
 
             Ok(CliInvocation::Command(CliCommand::Skills {
                 log_path,
+                session_id,
                 engine,
                 json,
                 full,
@@ -624,12 +641,13 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
         }
         CliCommand::Skills {
             log_path,
+            session_id,
             engine,
             json,
             full,
         } => {
             let log_path =
-                resolve_history_log_path(sessions_dir, &mut err, log_path, None, engine)?;
+                resolve_history_log_path(sessions_dir, &mut err, log_path, session_id, engine)?;
             let timeline = load_session_timeline(&log_path)?;
 
             let spans = detect_skill_spans(&timeline.items);
@@ -1532,6 +1550,7 @@ mod tests {
             parsed,
             CliInvocation::Command(CliCommand::Skills {
                 log_path: None,
+                session_id: None,
                 engine: None,
                 json: false,
                 full: false
@@ -1555,9 +1574,57 @@ mod tests {
             parsed,
             CliInvocation::Command(CliCommand::Skills {
                 log_path: Some(PathBuf::from("/tmp/project")),
+                session_id: None,
                 engine: Some(SessionEngine::Claude),
                 json: true,
                 full: true
+            })
+        );
+    }
+
+    #[test]
+    fn parse_skills_accepts_session_id_as_positional_argument() {
+        let parsed = parse_invocation(&args(&["ccbox", "skills", "019c754c"])).expect("parse");
+        assert_eq!(
+            parsed,
+            CliInvocation::Command(CliCommand::Skills {
+                log_path: None,
+                session_id: Some("019c754c".to_string()),
+                engine: None,
+                json: false,
+                full: false
+            })
+        );
+    }
+
+    #[test]
+    fn parse_skills_accepts_path_and_session_id() {
+        let parsed = parse_invocation(&args(&["ccbox", "skills", "/tmp/project", "019c754c"]))
+            .expect("parse");
+        assert_eq!(
+            parsed,
+            CliInvocation::Command(CliCommand::Skills {
+                log_path: Some(PathBuf::from("/tmp/project")),
+                session_id: Some("019c754c".to_string()),
+                engine: None,
+                json: false,
+                full: false
+            })
+        );
+    }
+
+    #[test]
+    fn parse_skills_accepts_session_id_flag() {
+        let parsed =
+            parse_invocation(&args(&["ccbox", "skills", "--id", "019c754c"])).expect("parse");
+        assert_eq!(
+            parsed,
+            CliInvocation::Command(CliCommand::Skills {
+                log_path: None,
+                session_id: Some("019c754c".to_string()),
+                engine: None,
+                json: false,
+                full: false
             })
         );
     }

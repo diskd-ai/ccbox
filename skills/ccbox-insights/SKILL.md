@@ -47,6 +47,26 @@ Follow a staged pipeline: collect -> filter -> summarize -> label -> aggregate -
 
 When triaging quickly, scan the timeline for failure signals (examples): `error`, `failed`, `non-zero`, `rejected`, `permission`, `timeout`.
 
+### Stage 1.5: Identify clarifications, corrections, and interruptions
+
+Treat user clarifications/corrections as high-signal evidence of workflow breakdowns. Your goal is to pinpoint where the agent went off-track and what rule would prevent it next time.
+
+Look for user messages that:
+
+- Clarify intent ("I meant X", "not that", "use Y instead").
+- Correct mistakes ("this is wrong", "stop", "revert", "you didn't follow the instructions").
+- Restate constraints after the fact ("do not run X", "no emojis", "do not use cargo", "do not change version", "do not release automatically").
+- Interrupt the session due to friction (hangs, repeated retries, "cancel", abandoning the thread).
+
+For each such moment, capture a small "course-correction record":
+
+- Trigger: what the agent did immediately before (tool call, plan, edit, or assumption).
+- Correction: the exact user sentence(s) that clarified/corrected.
+- Fix: what changed after the correction (new approach, different tool, narrower scope).
+- Lesson: one rule that would have prevented the detour (copy-ready, scoped project/global).
+
+If the session ends without a clear resolution (or the user abandons it), mark the outcome accordingly and explain the likely interruption reason using evidence (for example: hang/timeout, repeated invalid tool use, conflicting constraints).
+
 ### Stage 2: Summarize long timelines (only if needed)
 
 If the timeline is too large to analyze in one pass, summarize in chunks:

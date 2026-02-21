@@ -40,7 +40,9 @@ ccbox history "/abs/path/to/session.jsonl" --full
 
 ## Workflow (recommended)
 
-1. Confirm `ccbox` is available (`ccbox --help`).
+1. Confirm `ccbox` is available and up to date:
+   - `ccbox --help`
+   - `ccbox update` (prints `up-to-date:` or `updated:`; self-update is supported on macOS/Linux)
 2. Gather facts first (do not guess):
    - Use `ccbox sessions` to select the latest session for the current folder, or `ccbox sessions "/abs/project/path"` for an explicit project.
    - Copy the `log_path` from the first line.

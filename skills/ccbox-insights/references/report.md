@@ -8,6 +8,7 @@ Produce a Markdown "lessons learned" memo from a set of per-session facets.
 - **At a glance**:
   - What's working
   - What's causing tool-call errors (split: assistant-side vs user-side)
+  - Where the user had to intervene (clarifications/corrections/interruptions)
   - Quick wins to try
   - Ambitious workflows (for more capable systems)
 - **Lessons learned**: 5-10 copy-ready rules for "what to do next time" (each with why + evidence)
