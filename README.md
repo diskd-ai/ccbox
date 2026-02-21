@@ -1,6 +1,29 @@
 # ccbox
 
-Rust TUI “box” for managing coding-agent sessions (Codex, Claude, Gemini, OpenCode): browse local session logs now, and later reconstruct exactly what the agent did (files, tools, tokens).
+TUI “box” for managing coding-agent sessions (Codex, Claude, Gemini, OpenCode): browse local session logs now, and later reconstruct exactly what the agent did (files, tools, tokens).
+
+## Table of contents
+
+- [Status](#status)
+- [Key features (what it’s for)](#key-features-what-its-for)
+  - [Skill spans (and loop detection)](#skill-spans-and-loop-detection)
+  - [Timeline analysis (TUI + CLI)](#timeline-analysis-tui--cli)
+  - [Fork/resume sessions (Codex)](#forkresume-sessions-codex)
+  - [ccbox-insights skill (code-insights)](#ccbox-insights-skill-code-insights)
+- [Install](#install)
+- [Screenshots](#screenshots)
+  - [Projects](#projects)
+  - [Menu bar](#menu-bar)
+  - [Session Detail (timeline)](#session-detail-timeline)
+  - [Session actions (fork/resume)](#session-actions-forkresume)
+  - [Session stats](#session-stats)
+  - [Tasks](#tasks)
+  - [Processes](#processes)
+- [Roadmap](#roadmap)
+- [Run](#run)
+- [Skill (skills.sh)](#skill-skillssh)
+- [Keybindings (prototype)](#keybindings-prototype)
+- [License](#license)
 
 ## Status
 
