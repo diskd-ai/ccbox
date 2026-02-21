@@ -40,7 +40,7 @@ pub struct SessionStats {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ToolOutcome {
+pub enum ToolOutputOutcome {
     Success,
     Invalid,
     Error,
@@ -98,15 +98,15 @@ pub fn compute_session_stats(meta: &SessionMeta, items: &[TimelineItem]) -> Sess
 
         let outcome = match item.call_id.as_deref() {
             Some(call_id) => find_tool_output_for_call(items, index, call_id)
-                .map(|tool_out| classify_tool_output(tool_out.detail.as_str()))
-                .unwrap_or(ToolOutcome::Unknown),
-            None => ToolOutcome::Unknown,
+                .map(|tool_out| classify_tool_output_detail(tool_out.detail.as_str()))
+                .unwrap_or(ToolOutputOutcome::Unknown),
+            None => ToolOutputOutcome::Unknown,
         };
         match outcome {
-            ToolOutcome::Success => tool_calls_success += 1,
-            ToolOutcome::Invalid => tool_calls_invalid += 1,
-            ToolOutcome::Error => tool_calls_error += 1,
-            ToolOutcome::Unknown => tool_calls_unknown += 1,
+            ToolOutputOutcome::Success => tool_calls_success += 1,
+            ToolOutputOutcome::Invalid => tool_calls_invalid += 1,
+            ToolOutputOutcome::Error => tool_calls_error += 1,
+            ToolOutputOutcome::Unknown => tool_calls_unknown += 1,
         }
     }
 
@@ -252,18 +252,18 @@ fn find_tool_output_for_call<'a>(
     })
 }
 
-fn classify_tool_output(detail: &str) -> ToolOutcome {
+pub fn classify_tool_output_detail(detail: &str) -> ToolOutputOutcome {
     if let Some(code) = parse_exit_code(detail) {
         return if code == 0 {
-            ToolOutcome::Success
+            ToolOutputOutcome::Success
         } else {
-            ToolOutcome::Error
+            ToolOutputOutcome::Error
         };
     }
 
     let trimmed = detail.trim_start();
     if trimmed.starts_with("Success.") {
-        return ToolOutcome::Success;
+        return ToolOutputOutcome::Success;
     }
 
     let lower = trimmed.to_lowercase();
@@ -278,11 +278,11 @@ fn classify_tool_output(detail: &str) -> ToolOutcome {
         || lower.contains("unknown option")
         || lower.contains("unrecognized option")
     {
-        return ToolOutcome::Invalid;
+        return ToolOutputOutcome::Invalid;
     }
 
     if lower.contains("permission denied") || lower.contains("no such file or directory") {
-        return ToolOutcome::Error;
+        return ToolOutputOutcome::Error;
     }
 
     if lower.starts_with("error")
@@ -290,10 +290,10 @@ fn classify_tool_output(detail: &str) -> ToolOutcome {
         || lower.contains("error:")
         || lower.contains("failed:")
     {
-        return ToolOutcome::Error;
+        return ToolOutputOutcome::Error;
     }
 
-    ToolOutcome::Unknown
+    ToolOutputOutcome::Unknown
 }
 
 fn parse_exit_code(detail: &str) -> Option<i32> {
@@ -361,24 +361,24 @@ mod tests {
     #[test]
     fn classifies_exec_command_exit_codes() {
         assert_eq!(
-            classify_tool_output("Process exited with code 0\nok"),
-            ToolOutcome::Success
+            classify_tool_output_detail("Process exited with code 0\nok"),
+            ToolOutputOutcome::Success
         );
         assert_eq!(
-            classify_tool_output("Process exited with code 2\nnope"),
-            ToolOutcome::Error
+            classify_tool_output_detail("Process exited with code 2\nnope"),
+            ToolOutputOutcome::Error
         );
     }
 
     #[test]
     fn classifies_invalid_tool_use() {
         assert_eq!(
-            classify_tool_output("Invalid tool call: nope"),
-            ToolOutcome::Invalid
+            classify_tool_output_detail("Invalid tool call: nope"),
+            ToolOutputOutcome::Invalid
         );
         assert_eq!(
-            classify_tool_output("Unknown tool: x"),
-            ToolOutcome::Invalid
+            classify_tool_output_detail("Unknown tool: x"),
+            ToolOutputOutcome::Invalid
         );
     }
 }

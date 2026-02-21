@@ -8,6 +8,16 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.18] - 2026-02-21
+
+### Changes
+
+- CLI: show a bright-green update hint on `projects`, `sessions`, and `history` when a newer version is available (stderr, pipe-friendly).
+- TUI: Sessions list can be filtered/sorted by tool failures (`Ctrl+X` tool-errors-only, `Ctrl+O` tool-errors-first).
+- Docs: add installable `ccbox-insights` skill documentation.
+
+### Fixes
+
 ## [0.1.17] - 2026-02-21
 
 ### Changes

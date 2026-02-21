@@ -112,7 +112,7 @@ fn run_main() -> Result<(), MainError> {
             let _ = writeln!(out, "{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        CliInvocation::Tui => Ok(run_tui()?),
+        CliInvocation::Tui { engine } => Ok(run_tui(engine)?),
         CliInvocation::Command(command) => {
             let sessions_dir = resolve_sessions_dir().map_err(app::AppError::from)?;
             crate::cli::run(command, &sessions_dir)?;
@@ -123,19 +123,28 @@ fn run_main() -> Result<(), MainError> {
 
 fn print_help() {
     let text = format!(
-        "{name} — manage coding-agent sessions (Codex + Claude)\n\nUSAGE:\n  {name}                          Start the TUI\n  {name} projects                 List discovered projects\n  {name} sessions [project-path]  List sessions (defaults to current folder)\n  {name} history [log|project]    Print timeline (defaults to latest for current folder)\n  {name} update                   Self-update from GitHub Releases (macOS/Linux)\n  {name} --help | --version\n\nSESSIONS FLAGS:\n  --limit N   Max sessions to print (default: 10)\n  --offset N  Skip first N sessions (default: 0)\n  --size      Include file size bytes column\n\nHISTORY FLAGS:\n  --limit N   Max timeline items to print (default: 10)\n  --offset N  Skip first N timeline items (default: 0)\n  --full      Include full details (tool outputs, long messages)\n  --size      Print stats to stderr (bytes + item counts)\n\nOUTPUT:\n  projects: project_name<TAB>project_path<TAB>session_count\n  sessions: started_at<TAB>session_id<TAB>title<TAB>log_path  (with --size adds file_size_bytes before log_path)\n\nENV:\n  CODEX_SESSIONS_DIR    Override Codex sessions dir (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n  CLAUDE_PROJECTS_DIR   Override Claude projects dir (default: ~/.claude/projects)\n",
+        "{name} — manage coding-agent sessions (Codex + Claude + Gemini + OpenCode)\n\nUSAGE:\n  {name} [--engine ENGINE]                Start the TUI\n  {name} projects [--engine ENGINE]       List discovered projects\n  {name} sessions [project-path] [--engine ENGINE]  List sessions (defaults to current folder)\n  {name} history [log|project] [session-id] [--engine ENGINE]  Print timeline (defaults to latest for current folder)\n  {name} update                           Self-update from GitHub Releases (macOS/Linux)\n  {name} --help | --version\n\nENGINE:\n  --engine NAME  Filter by engine: all|codex|claude|gemini|opencode (default: all)\n\nSESSIONS FLAGS:\n  --limit N      Max sessions to print (default: 10)\n  --offset N     Skip first N sessions (default: 0)\n  --size         Include file size bytes column\n\nHISTORY FLAGS:\n  --limit N      Max timeline items to print (default: 10)\n  --offset N     Skip first N timeline items (default: 0)\n  --id ID        Select a session id (positional session-id also supported)\n  --full         Include full details (tool outputs, long messages)\n  --size         Print stats to stderr (bytes + item counts)\n\nOUTPUT:\n  projects: project_name<TAB>project_path<TAB>session_count\n  sessions: started_at<TAB>session_id<TAB>title<TAB>log_path  (with --size adds file_size_bytes before log_path)\n\nENV:\n  CODEX_SESSIONS_DIR    Override Codex sessions dir (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n  CLAUDE_PROJECTS_DIR   Override Claude projects dir (default: ~/.claude/projects)\n",
         name = env!("CARGO_PKG_NAME")
     );
     let mut out = io::stdout().lock();
     let _ = write!(out, "{text}");
 }
 
-fn run_tui() -> Result<(), crate::app::AppError> {
+fn run_tui(engine: Option<crate::domain::SessionEngine>) -> Result<(), crate::app::AppError> {
     let sessions_dir = resolve_sessions_dir()?;
     let scan = scan_all_sessions(&sessions_dir);
     let initial_data =
         app::build_index_from_sessions(sessions_dir.clone(), scan.sessions, scan.warnings);
     let mut model = AppModel::new(initial_data).with_notice(scan.notice);
+    if let Some(engine) = engine {
+        let filter = match engine {
+            crate::domain::SessionEngine::Codex => crate::app::EngineFilter::Codex,
+            crate::domain::SessionEngine::Claude => crate::app::EngineFilter::Claude,
+            crate::domain::SessionEngine::Gemini => crate::app::EngineFilter::Gemini,
+            crate::domain::SessionEngine::OpenCode => crate::app::EngineFilter::OpenCode,
+        };
+        model = model.with_engine_filter(filter);
+    }
     let mut terminal = setup_terminal()?;
     if let Ok((width, height)) = terminal_size() {
         model = model.with_terminal_size(width, height);
@@ -333,7 +342,7 @@ fn run(
             while let Ok(signal) = rx.try_recv() {
                 match signal {
                     SessionIndexSignal::Updated { index } => {
-                        model.session_index = index;
+                        *model = model.with_session_index(index);
                         refresh_open_project_stats_overlay(model);
                     }
                 }
@@ -1789,6 +1798,7 @@ impl Drop for SuspendTuiGuard<'_> {
     fn drop(&mut self) {
         let _ = execute!(self.terminal.backend_mut(), EnterAlternateScreen);
         let _ = self.terminal.hide_cursor();
+        let _ = self.terminal.clear();
     }
 }
 

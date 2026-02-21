@@ -138,29 +138,19 @@ Notes:
 
 ## Skill (skills.sh)
 
-This repo ships an agent skill named `ccbox` that teaches Codex/Claude/Gemini how to inspect local session logs using the `ccbox` CLI (`projects`, `sessions`, `history`).
+This repo ships agent skills:
 
-Install it:
+- `ccbox`: inspect local session logs using the `ccbox` CLI (`projects`, `sessions`, `history`)
+- `ccbox-insights`: analyze tool-call failures in session logs and propose additive instructions (project `AGENTS.md` + global)
+
+Install one or both:
 
 ```bash
 npx skills add diskd-ai/ccbox --skill ccbox --global --yes
+npx skills add diskd-ai/ccbox --skill ccbox-insights --global --yes
 ```
 
-Make it available to your agent (one-time). If your agent already reads `~/.agents/skills`, you can skip this:
-
-```bash
-# Codex CLI
-mkdir -p ~/.codex/skills
-ln -s ~/.agents/skills/ccbox ~/.codex/skills/ccbox
-
-# Claude Code
-mkdir -p ~/.claude/skills
-ln -s ~/.agents/skills/ccbox ~/.claude/skills/ccbox
-
-# Gemini CLI
-mkdir -p ~/.gemini/skills
-ln -s ~/.agents/skills/ccbox ~/.gemini/skills/ccbox
-```
+No additional setup is required after `npx skills add ... --global`.
 
 Requirements: `ccbox` on your `$PATH` and access to your sessions directory (`CODEX_SESSIONS_DIR` if needed).
 
@@ -169,6 +159,8 @@ Example prompts:
 - Codex: `codex "Use the ccbox skill to summarize the latest session for this repo."`
 - Claude: `claude "Use the ccbox skill to summarize the latest session for this repo."`
 - Gemini: `gemini "Use the ccbox skill to summarize the latest session for this repo."`
+- Insights (project): `Use the ccbox-insights skill to analyze tool-call failures in the latest 20 sessions for "/path/to/project".`
+- Insights (global for codex): `Use the ccbox-insights skill to analyze **codex** tool-call failures across my top 5 projects (by session count) and propose global instruction updates.`
 
 ## Keybindings (prototype)
 

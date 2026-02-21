@@ -1,0 +1,4 @@
+interface:
+  display_name: "ccbox-insights"
+  short_description: "Find tool-call failures and propose instructions"
+

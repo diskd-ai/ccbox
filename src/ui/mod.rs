@@ -707,18 +707,28 @@ fn render_sessions(
     };
 
     let filtered_indices = &sessions_view.filtered_indices;
-    let has_filter =
-        !sessions_view.query.trim().is_empty() || model.engine_filter != EngineFilter::All;
+    let has_filter = !sessions_view.query.trim().is_empty()
+        || model.engine_filter != EngineFilter::All
+        || sessions_view.tool_errors_only;
     let engine_fragment = if model.engine_filter == EngineFilter::All {
         String::new()
     } else {
         format!(" · Engine: {}", model.engine_filter.label())
     };
+    let errors_fragment = if sessions_view.tool_errors_only {
+        " · Tool errors only"
+    } else {
+        ""
+    };
+    let order_label = sessions_view.order.label();
     let list_title = if !has_filter {
-        format!("Sessions · {} total · newest first", project.sessions.len())
+        format!(
+            "Sessions · {} total · {order_label}{engine_fragment}{errors_fragment}",
+            project.sessions.len()
+        )
     } else {
         format!(
-            "Sessions · {}/{} shown · newest first{engine_fragment}",
+            "Sessions · {}/{} shown · {order_label}{engine_fragment}{errors_fragment}",
             filtered_indices.len(),
             project.sessions.len()
         )
@@ -727,7 +737,7 @@ fn render_sessions(
     let list_title = truncate_end(&list_title, list_title_budget);
 
     if filtered_indices.is_empty() {
-        let message = if sessions_view.query.trim().is_empty() {
+        let message = if !has_filter {
             "No sessions found."
         } else {
             "No matching sessions. Press Esc to clear the filter."
@@ -1689,11 +1699,11 @@ fn sessions_footer_line(
     processes_running: bool,
 ) -> Paragraph<'static> {
     let text = if warnings == 0 {
-        "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Tab=select  Space=result  F3=stats  Ctrl+E/Cmd+E=rename  Ctrl+P/Cmd+P=move  Ctrl+N/Cmd+N=new  Del=delete  Esc=clear/back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
+        "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Tab=select  Space=result  F3=stats  Ctrl+X/Cmd+X=tool-errors  Ctrl+O/Cmd+O=order-errors  Ctrl+E/Cmd+E=rename  Ctrl+P/Cmd+P=move  Ctrl+N/Cmd+N=new  Del=delete  Esc=clear/back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help"
             .to_string()
     } else {
         format!(
-            "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Tab=select  Space=result  F3=stats  Ctrl+E/Cmd+E=rename  Ctrl+P/Cmd+P=move  Ctrl+N/Cmd+N=new  Del=delete  Esc=clear/back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
+            "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Tab=select  Space=result  F3=stats  Ctrl+X/Cmd+X=tool-errors  Ctrl+O/Cmd+O=order-errors  Ctrl+E/Cmd+E=rename  Ctrl+P/Cmd+P=move  Ctrl+N/Cmd+N=new  Del=delete  Esc=clear/back  Ctrl+R=rescan  Ctrl+Q/Ctrl+C=quit  F1/?=help  ·  warnings: {warnings}"
         )
     };
     footer_paragraph(text, notice, update_hint, processes_running)
@@ -4558,7 +4568,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
             title,
             Style::default().add_modifier(Modifier::BOLD),
         )]),
-        Line::from("Manage coding-agent sessions (Codex + Claude)."),
+        Line::from("Manage coding-agent sessions (Codex + Claude + Gemini + OpenCode)."),
         Line::from(
             "Browse projects/sessions, view timelines, spawn sessions, and keep ccbox updated.",
         ),
@@ -4589,6 +4599,8 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  - Projects: Space shows Result (newest session Out)"),
         Line::from("  - Projects: F3 shows Statistics"),
         Line::from("  - Sessions: type to filter, Esc clears filter"),
+        Line::from("  - Sessions: Ctrl+X/Cmd+X toggles Tool errors only"),
+        Line::from("  - Sessions: Ctrl+O/Cmd+O toggles order by Tool errors"),
         Line::from("  - Sessions: Del deletes session log (Backspace edits filter)"),
         Line::from("  - Sessions: Space shows Result (last Out)"),
         Line::from("  - Sessions: Ctrl+N/Cmd+N opens New Session"),
@@ -4604,8 +4616,8 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
             "  - New Task: Ctrl+S saves, Ctrl+I inserts image, Ctrl+V pastes image, Ctrl+P edits project path",
         ),
         Line::from("  - Task Detail: Ctrl+Enter spawns, Shift+Tab switches engine, Del deletes"),
-        Line::from("  - Projects: CX/CL/GM indicates engine (matches filter or newest)"),
-        Line::from("  - Sessions: CX/CL/GM indicates engine"),
+        Line::from("  - Projects: CX/CL/GM/OC indicates engine (matches filter or newest)"),
+        Line::from("  - Sessions: CX/CL/GM/OC indicates engine"),
         Line::from("  - Sessions: ● indicates online"),
         Line::from("  - Session Detail: Tab switches focus (Timeline / Details)"),
         Line::from("  - Session Detail: o shows Result (last Out)"),

@@ -1,8 +1,9 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
+use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -47,6 +48,12 @@ pub struct UpdateAvailable {
     pub latest_tag: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LatestReleaseInfo {
+    pub version: Version,
+    pub tag: String,
+}
+
 #[derive(Debug, Error)]
 pub enum UpdateError {
     #[error("failed to fetch latest release: {0}")]
@@ -87,26 +94,20 @@ pub fn check_for_update(current_version: &str) -> Result<Option<UpdateAvailable>
         UpdateError::InvalidLatestTag(format!("current version is invalid: {current_version}"))
     })?;
 
-    let latest = fetch_latest_release()?;
-    if latest.latest <= current {
+    let latest = fetch_latest_release_info(Duration::from_secs(4))?;
+    if latest.version <= current {
         return Ok(None);
     }
 
     Ok(Some(UpdateAvailable {
         current,
-        latest: latest.latest,
-        latest_tag: latest.latest_tag,
+        latest: latest.version,
+        latest_tag: latest.tag,
     }))
 }
 
-#[derive(Clone, Debug)]
-struct LatestRelease {
-    latest: Version,
-    latest_tag: String,
-}
-
-fn fetch_latest_release() -> Result<LatestRelease, UpdateError> {
-    let agent = make_agent(Duration::from_secs(4));
+pub fn fetch_latest_release_info(timeout: Duration) -> Result<LatestReleaseInfo, UpdateError> {
+    let agent = make_agent(timeout);
 
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let mut response = agent
@@ -127,9 +128,9 @@ fn fetch_latest_release() -> Result<LatestRelease, UpdateError> {
     let latest = Version::parse(&parsed.tag_name)
         .ok_or_else(|| UpdateError::InvalidLatestTag(parsed.tag_name.clone()))?;
 
-    Ok(LatestRelease {
-        latest,
-        latest_tag: parsed.tag_name,
+    Ok(LatestReleaseInfo {
+        version: latest,
+        tag: parsed.tag_name,
     })
 }
 
@@ -143,6 +144,56 @@ pub fn self_update() -> Result<Option<UpdateAvailable>, UpdateError> {
 
     install_binary(&extracted)?;
     Ok(Some(update))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct UpdateCheckCacheFile {
+    version: u32,
+    checked_unix_ms: i64,
+    latest_tag: String,
+}
+
+fn update_cache_path(state_dir: &Path) -> std::path::PathBuf {
+    state_dir.join("update_check.json")
+}
+
+pub fn load_update_check_cache(state_dir: &Path) -> Result<Option<(i64, String)>, io::Error> {
+    let path = update_cache_path(state_dir);
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let parsed: UpdateCheckCacheFile = match serde_json::from_str(&raw) {
+        Ok(parsed) => parsed,
+        Err(_) => return Ok(None),
+    };
+    if parsed.latest_tag.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((parsed.checked_unix_ms, parsed.latest_tag)))
+}
+
+pub fn save_update_check_cache(state_dir: &Path, latest_tag: &str) -> Result<(), io::Error> {
+    fs::create_dir_all(state_dir)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let checked_unix_ms = i64::try_from(now).unwrap_or(i64::MAX);
+
+    let file = UpdateCheckCacheFile {
+        version: 1,
+        checked_unix_ms,
+        latest_tag: latest_tag.to_string(),
+    };
+
+    let path = update_cache_path(state_dir);
+    let tmp = path.with_extension("json.tmp");
+    let text = serde_json::to_string_pretty(&file).unwrap_or_else(|_| "{}".to_string());
+    fs::write(&tmp, text)?;
+    fs::rename(tmp, path)?;
+    Ok(())
 }
 
 fn download_release_archive(tag: &str, version: &Version) -> Result<Vec<u8>, UpdateError> {

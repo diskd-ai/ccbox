@@ -210,7 +210,12 @@ impl AppModel {
                 {
                     Some(project) => {
                         let mut next_view = sessions_view.clone();
-                        apply_session_filter(&project.sessions, &mut next_view, self.engine_filter);
+                        apply_session_filter(
+                            &project.sessions,
+                            self.session_index.as_ref(),
+                            &mut next_view,
+                            self.engine_filter,
+                        );
                         prune_sessions_selection(&project.sessions, &mut next_view);
                         if let Some(log_path) = selected_log_path {
                             if let Some(session_index) = project
@@ -265,6 +270,7 @@ impl AppModel {
                         let mut next_view = new_session_view.clone();
                         apply_session_filter(
                             &project.sessions,
+                            self.session_index.as_ref(),
                             &mut next_view.from_sessions,
                             self.engine_filter,
                         );
@@ -309,6 +315,7 @@ impl AppModel {
                         let mut next_view = detail_view.clone();
                         apply_session_filter(
                             &project.sessions,
+                            self.session_index.as_ref(),
                             &mut next_view.from_sessions,
                             self.engine_filter,
                         );
@@ -429,6 +436,14 @@ impl AppModel {
             project_stats_overlay: self.project_stats_overlay.clone(),
             processes: self.processes.clone(),
         }
+    }
+
+    pub fn with_engine_filter(&self, filter: EngineFilter) -> Self {
+        apply_engine_filter(self.clone(), filter)
+    }
+
+    pub fn with_session_index(&self, index: Arc<SessionIndex>) -> Self {
+        apply_session_index_update(self.clone(), index)
     }
 
     pub fn open_session_detail(
@@ -844,7 +859,7 @@ pub const MAIN_MENU_PROJECTS_ITEMS: [MainMenuEntry; 4] = [
     },
 ];
 
-pub const MAIN_MENU_SESSIONS_ITEMS: [MainMenuEntry; 8] = [
+pub const MAIN_MENU_SESSIONS_ITEMS: [MainMenuEntry; 10] = [
     MainMenuEntry {
         label: "Open",
         hotkey: "Enter",
@@ -867,6 +882,22 @@ pub const MAIN_MENU_SESSIONS_ITEMS: [MainMenuEntry; 8] = [
         key: MainMenuKey {
             code: KeyCode::F(3),
             modifiers: KeyModifiers::NONE,
+        },
+    },
+    MainMenuEntry {
+        label: "Tool errors only",
+        hotkey: "Ctrl+X or Cmd+X",
+        key: MainMenuKey {
+            code: KeyCode::Char('x'),
+            modifiers: KeyModifiers::CONTROL,
+        },
+    },
+    MainMenuEntry {
+        label: "Order: Tool errors first",
+        hotkey: "Ctrl+O or Cmd+O",
+        key: MainMenuKey {
+            code: KeyCode::Char('o'),
+            modifiers: KeyModifiers::CONTROL,
         },
     },
     MainMenuEntry {
@@ -1545,6 +1576,8 @@ impl ProjectsView {
 pub struct SessionsView {
     pub project_path: PathBuf,
     pub query: String,
+    pub tool_errors_only: bool,
+    pub order: SessionsOrder,
     pub filtered_indices: Vec<usize>,
     pub session_selected: usize,
     pub selection_anchor: Option<PathBuf>,
@@ -1556,6 +1589,8 @@ impl SessionsView {
         Self {
             project_path,
             query: String::new(),
+            tool_errors_only: false,
+            order: SessionsOrder::NewestFirst,
             filtered_indices: (0..session_count).collect(),
             session_selected: 0,
             selection_anchor: None,
@@ -1570,6 +1605,28 @@ impl SessionsView {
         projects
             .iter()
             .find(|project| project.project_path == self.project_path)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionsOrder {
+    NewestFirst,
+    ToolErrorsFirst,
+}
+
+impl SessionsOrder {
+    pub fn toggle_tool_errors_first(self) -> Self {
+        match self {
+            Self::NewestFirst => Self::ToolErrorsFirst,
+            Self::ToolErrorsFirst => Self::NewestFirst,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NewestFirst => "newest first",
+            Self::ToolErrorsFirst => "tool errors first",
+        }
     }
 }
 
@@ -1927,7 +1984,12 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
         };
 
         if let Some(project) = sessions_view.current_project(&model.data.projects) {
-            apply_session_filter(&project.sessions, &mut sessions_view, model.engine_filter);
+            apply_session_filter(
+                &project.sessions,
+                model.session_index.as_ref(),
+                &mut sessions_view,
+                model.engine_filter,
+            );
         }
 
         model.view = View::Sessions(sessions_view);
@@ -2067,7 +2129,12 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
 
                 let mut sessions_view =
                     SessionsView::new(project.project_path.clone(), project.sessions.len());
-                apply_session_filter(&project.sessions, &mut sessions_view, model.engine_filter);
+                apply_session_filter(
+                    &project.sessions,
+                    model.session_index.as_ref(),
+                    &mut sessions_view,
+                    model.engine_filter,
+                );
                 let engine = default_new_session_engine(model.engine_filter, Some(project));
                 let mut new_session_view = NewSessionView::new(sessions_view);
                 new_session_view.engine = engine;
@@ -2102,6 +2169,7 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                 if let Some(project) = sessions_view.current_project(&model.data.projects) {
                     apply_session_filter(
                         &project.sessions,
+                        model.session_index.as_ref(),
                         &mut sessions_view,
                         model.engine_filter,
                     );
@@ -2125,6 +2193,7 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                 if let Some(project) = sessions_view.current_project(&model.data.projects) {
                     apply_session_filter(
                         &project.sessions,
+                        model.session_index.as_ref(),
                         &mut sessions_view,
                         model.engine_filter,
                     );
@@ -2148,6 +2217,7 @@ fn update_on_key(model: AppModel, key: KeyEvent) -> (AppModel, AppCommand) {
                 if let Some(project) = sessions_view.current_project(&model.data.projects) {
                     apply_session_filter(
                         &project.sessions,
+                        model.session_index.as_ref(),
                         &mut sessions_view,
                         model.engine_filter,
                     );
@@ -2401,7 +2471,12 @@ fn infer_session_detail_target_view(
             };
             let mut from_sessions =
                 SessionsView::new(project.project_path.clone(), project.sessions.len());
-            apply_session_filter(&project.sessions, &mut from_sessions, model.engine_filter);
+            apply_session_filter(
+                &project.sessions,
+                model.session_index.as_ref(),
+                &mut from_sessions,
+                model.engine_filter,
+            );
             if let Some(selected_index) = project
                 .sessions
                 .iter()
@@ -2514,7 +2589,12 @@ fn apply_engine_filter(mut model: AppModel, filter: EngineFilter) -> AppModel {
         }
         View::Sessions(mut view) => {
             if let Some(project) = view.current_project(&model.data.projects) {
-                apply_session_filter(&project.sessions, &mut view, model.engine_filter);
+                apply_session_filter(
+                    &project.sessions,
+                    model.session_index.as_ref(),
+                    &mut view,
+                    model.engine_filter,
+                );
             } else {
                 view.filtered_indices.clear();
                 view.session_selected = 0;
@@ -2523,6 +2603,52 @@ fn apply_engine_filter(mut model: AppModel, filter: EngineFilter) -> AppModel {
             model.view = View::Sessions(view);
         }
         _ => {}
+    }
+
+    model
+}
+
+fn apply_session_index_update(mut model: AppModel, index: Arc<SessionIndex>) -> AppModel {
+    model.session_index = index;
+
+    if let View::Sessions(mut view) = model.view.clone() {
+        if !view.tool_errors_only && view.order != SessionsOrder::ToolErrorsFirst {
+            return model;
+        }
+
+        let selected_log_path = view
+            .current_project(&model.data.projects)
+            .and_then(|project| {
+                view.filtered_indices
+                    .get(view.session_selected)
+                    .copied()
+                    .and_then(|index| project.sessions.get(index))
+            })
+            .map(|session| session.log_path.clone());
+
+        if let Some(project) = view.current_project(&model.data.projects) {
+            apply_session_filter(
+                &project.sessions,
+                model.session_index.as_ref(),
+                &mut view,
+                model.engine_filter,
+            );
+            if let Some(log_path) = selected_log_path {
+                if let Some(pos) = view.filtered_indices.iter().position(|index| {
+                    project
+                        .sessions
+                        .get(*index)
+                        .is_some_and(|session| session.log_path == log_path)
+                }) {
+                    view.session_selected = pos;
+                }
+            }
+        } else {
+            view.filtered_indices.clear();
+            view.session_selected = 0;
+        }
+
+        model.view = View::Sessions(view);
     }
 
     model
@@ -3261,7 +3387,12 @@ fn update_projects(
             };
             let mut sessions_view =
                 SessionsView::new(project.project_path.clone(), project.sessions.len());
-            apply_session_filter(&project.sessions, &mut sessions_view, model.engine_filter);
+            apply_session_filter(
+                &project.sessions,
+                model.session_index.as_ref(),
+                &mut sessions_view,
+                model.engine_filter,
+            );
             let next = AppModel {
                 data: model.data.clone(),
                 session_index: model.session_index.clone(),
@@ -3576,24 +3707,35 @@ fn prune_project_selection(projects: &[ProjectSummary], view: &mut ProjectsView)
 
 fn apply_session_filter(
     sessions: &[SessionSummary],
+    index: &SessionIndex,
     view: &mut SessionsView,
     engine: EngineFilter,
 ) {
     let query = view.query.trim().to_lowercase();
+    let errors_only = view.tool_errors_only;
     if query.is_empty() {
         view.filtered_indices = sessions
             .iter()
             .enumerate()
-            .filter_map(|(index, session)| {
-                session_matches_engine_filter(session, engine).then_some(index)
+            .filter_map(|(session_index, session)| {
+                if !session_matches_engine_filter(session, engine) {
+                    return None;
+                }
+                if errors_only && !session_matches_tool_error_filter(session, index) {
+                    return None;
+                }
+                Some(session_index)
             })
             .collect();
     } else {
         view.filtered_indices = sessions
             .iter()
             .enumerate()
-            .filter_map(|(index, session)| {
+            .filter_map(|(session_index, session)| {
                 if !session_matches_engine_filter(session, engine) {
+                    return None;
+                }
+                if errors_only && !session_matches_tool_error_filter(session, index) {
                     return None;
                 }
                 let haystack = format!(
@@ -3604,12 +3746,36 @@ fn apply_session_filter(
                     session.log_path.display().to_string().to_lowercase()
                 );
                 if haystack.contains(&query) {
-                    Some(index)
+                    Some(session_index)
                 } else {
                     None
                 }
             })
             .collect();
+    }
+
+    if view.order == SessionsOrder::ToolErrorsFirst && !view.filtered_indices.is_empty() {
+        view.filtered_indices.sort_by(|a, b| {
+            let a_session = sessions.get(*a);
+            let b_session = sessions.get(*b);
+
+            let a_total = a_session
+                .and_then(|session| index.tool_failures(&session.log_path))
+                .map(|counts| counts.total())
+                .unwrap_or(0);
+            let b_total = b_session
+                .and_then(|session| index.tool_failures(&session.log_path))
+                .map(|counts| counts.total())
+                .unwrap_or(0);
+
+            let a_has = a_total > 0;
+            let b_has = b_total > 0;
+
+            b_has
+                .cmp(&a_has)
+                .then_with(|| b_total.cmp(&a_total))
+                .then_with(|| a.cmp(b))
+        });
     }
 
     if view.filtered_indices.is_empty() {
@@ -3619,6 +3785,12 @@ fn apply_session_filter(
             .session_selected
             .min(view.filtered_indices.len().saturating_sub(1));
     }
+}
+
+fn session_matches_tool_error_filter(session: &SessionSummary, index: &SessionIndex) -> bool {
+    index
+        .tool_failures(&session.log_path)
+        .is_some_and(|counts| counts.total() > 0)
 }
 
 fn prune_sessions_selection(sessions: &[SessionSummary], view: &mut SessionsView) {
@@ -4100,6 +4272,84 @@ fn update_sessions(
             };
             return (model, AppCommand::OpenSessionStats { session });
         }
+        KeyCode::Char('x') | KeyCode::Char('X') if new_modifier => {
+            let selected_log_path = view
+                .current_project(&model.data.projects)
+                .and_then(|project| {
+                    view.filtered_indices
+                        .get(view.session_selected)
+                        .copied()
+                        .and_then(|index| project.sessions.get(index))
+                })
+                .map(|session| session.log_path.clone());
+
+            view.tool_errors_only = !view.tool_errors_only;
+
+            if let Some(project) = view.current_project(&model.data.projects) {
+                apply_session_filter(
+                    &project.sessions,
+                    model.session_index.as_ref(),
+                    &mut view,
+                    model.engine_filter,
+                );
+                if let Some(log_path) = selected_log_path {
+                    if let Some(pos) = view.filtered_indices.iter().position(|index| {
+                        project
+                            .sessions
+                            .get(*index)
+                            .is_some_and(|session| session.log_path == log_path)
+                    }) {
+                        view.session_selected = pos;
+                    }
+                }
+            } else {
+                view.filtered_indices.clear();
+                view.session_selected = 0;
+            }
+
+            clear_sessions_selection(&mut view);
+            model.view = View::Sessions(view);
+            return (model, AppCommand::None);
+        }
+        KeyCode::Char('o') | KeyCode::Char('O') if new_modifier => {
+            let selected_log_path = view
+                .current_project(&model.data.projects)
+                .and_then(|project| {
+                    view.filtered_indices
+                        .get(view.session_selected)
+                        .copied()
+                        .and_then(|index| project.sessions.get(index))
+                })
+                .map(|session| session.log_path.clone());
+
+            view.order = view.order.toggle_tool_errors_first();
+
+            if let Some(project) = view.current_project(&model.data.projects) {
+                apply_session_filter(
+                    &project.sessions,
+                    model.session_index.as_ref(),
+                    &mut view,
+                    model.engine_filter,
+                );
+                if let Some(log_path) = selected_log_path {
+                    if let Some(pos) = view.filtered_indices.iter().position(|index| {
+                        project
+                            .sessions
+                            .get(*index)
+                            .is_some_and(|session| session.log_path == log_path)
+                    }) {
+                        view.session_selected = pos;
+                    }
+                }
+            } else {
+                view.filtered_indices.clear();
+                view.session_selected = 0;
+            }
+
+            clear_sessions_selection(&mut view);
+            model.view = View::Sessions(view);
+            return (model, AppCommand::None);
+        }
         KeyCode::Char('e') | KeyCode::Char('E') if new_modifier => {
             let Some(project) = view.current_project(&model.data.projects) else {
                 return (model, AppCommand::None);
@@ -4169,7 +4419,12 @@ fn update_sessions(
             if !view.query.is_empty() {
                 view.query.clear();
                 if let Some(project) = view.current_project(&model.data.projects) {
-                    apply_session_filter(&project.sessions, &mut view, model.engine_filter);
+                    apply_session_filter(
+                        &project.sessions,
+                        model.session_index.as_ref(),
+                        &mut view,
+                        model.engine_filter,
+                    );
                 } else {
                     view.filtered_indices.clear();
                     view.session_selected = 0;
@@ -4180,6 +4435,25 @@ fn update_sessions(
             }
 
             if !view.selected_log_paths.is_empty() {
+                clear_sessions_selection(&mut view);
+                model.view = View::Sessions(view);
+                return (model, AppCommand::None);
+            }
+
+            if view.tool_errors_only || view.order != SessionsOrder::NewestFirst {
+                view.tool_errors_only = false;
+                view.order = SessionsOrder::NewestFirst;
+                if let Some(project) = view.current_project(&model.data.projects) {
+                    apply_session_filter(
+                        &project.sessions,
+                        model.session_index.as_ref(),
+                        &mut view,
+                        model.engine_filter,
+                    );
+                } else {
+                    view.filtered_indices.clear();
+                    view.session_selected = 0;
+                }
                 clear_sessions_selection(&mut view);
                 model.view = View::Sessions(view);
                 return (model, AppCommand::None);
@@ -4282,7 +4556,12 @@ fn update_sessions(
             if !view.query.is_empty() {
                 view.query.pop();
                 if let Some(project) = view.current_project(&model.data.projects) {
-                    apply_session_filter(&project.sessions, &mut view, model.engine_filter);
+                    apply_session_filter(
+                        &project.sessions,
+                        model.session_index.as_ref(),
+                        &mut view,
+                        model.engine_filter,
+                    );
                 } else {
                     view.filtered_indices.clear();
                     view.session_selected = 0;
@@ -4386,7 +4665,12 @@ fn update_sessions(
             if is_text_input_char(character) {
                 view.query.push(character);
                 if let Some(project) = view.current_project(&model.data.projects) {
-                    apply_session_filter(&project.sessions, &mut view, model.engine_filter);
+                    apply_session_filter(
+                        &project.sessions,
+                        model.session_index.as_ref(),
+                        &mut view,
+                        model.engine_filter,
+                    );
                 } else {
                     view.filtered_indices.clear();
                     view.session_selected = 0;
