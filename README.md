@@ -4,7 +4,7 @@ TUI “box” for managing coding-agent sessions (Codex, Claude, Gemini, OpenCod
 
 ## Table of contents
 
-- [Status](#status)
+- [Features](#features)
 - [Key features (what it’s for)](#key-features-what-its-for)
   - [Skill spans (and loop detection)](#skill-spans-and-loop-detection)
   - [Timeline analysis (TUI + CLI)](#timeline-analysis-tui--cli)
@@ -25,16 +25,20 @@ TUI “box” for managing coding-agent sessions (Codex, Claude, Gemini, OpenCod
 - [Keybindings (prototype)](#keybindings-prototype)
 - [License](#license)
 
-## Status
+## Features
 
-Prototype features:
 - Full-screen **Projects** → **Sessions** → **Session Detail** timeline
+- Multi-engine support (Codex, Claude, Gemini, OpenCode) with TUI + CLI filters
+- Type-to-filter + highlight, multi-select, and batch delete (with confirmation)
 - “Online” dot (`●`) for recently modified projects/sessions
-- Delete project/session logs with confirmation
-- New Session prompt editor (`n`) that spawns Codex/Claude in `Pipes` or `TTY` mode
-- Processes screen (`P`) for stdout/stderr/log viewing + killing spawned agents
-- Attach/detach to spawned `TTY` sessions (`a` to attach, `Ctrl-]` to detach)
+- Skill span tracing (colored gutter + loop detection) and a Skills overlay (`S`)
+- Fork/resume Codex from a selected timeline item (`f`)
+- Statistics windows for projects/sessions (`F3`)
+- Tasks screen + editor (including clipboard image paste)
+- New Session prompt editor (`n`) that spawns agents in `Pipes` or `TTY` mode
+- Processes screen (`P`) for stdout/stderr/log viewing + killing spawned agents; attach/detach TTY (`a`, `Ctrl-]`)
 - Auto-rescans when session sources change (file watcher for Codex/Claude/Gemini/OpenCode)
+- Update notifications and self-update (`ccbox update`)
 
 ## Key features (what it’s for)
 
