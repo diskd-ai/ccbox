@@ -6,11 +6,18 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Changes
 
+### Fixes
+
+## [0.1.17] - 2026-02-21
+
+### Changes
+
 - Claude: derive session titles from the `## Task` section in Project Context prompts.
 
 ### Fixes
 
 - TUI: OpenCode sessions use an `OC` badge with a distinct color.
+- TUI: fix empty Claude timelines when session logs start with `queue-operation`.
 
 ## [0.1.16] - 2026-02-20
 
