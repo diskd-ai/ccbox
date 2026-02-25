@@ -2,6 +2,7 @@ mod app;
 mod cli;
 mod domain;
 mod infra;
+mod remote;
 mod ui;
 
 use crate::app::ProcessOutputKind;
@@ -48,6 +49,9 @@ enum MainError {
 
     #[error(transparent)]
     Cli(#[from] crate::cli::CliRunError),
+
+    #[error(transparent)]
+    Remote(#[from] crate::remote::ServeError),
 }
 
 #[derive(Clone, Debug)]
@@ -112,6 +116,7 @@ fn run_main() -> Result<(), MainError> {
             let _ = writeln!(out, "{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        CliInvocation::Serve(opts) => Ok(crate::remote::run_serve(opts)?),
         CliInvocation::Tui { engine } => Ok(run_tui(engine)?),
         CliInvocation::Command(command) => {
             let sessions_dir = resolve_sessions_dir().map_err(app::AppError::from)?;
@@ -123,7 +128,7 @@ fn run_main() -> Result<(), MainError> {
 
 fn print_help() {
     let text = format!(
-        "{name} — manage coding-agent sessions (Codex + Claude + Gemini + OpenCode)\n\nUSAGE:\n  {name} [--engine ENGINE]                Start the TUI\n  {name} projects [--engine ENGINE]       List discovered projects\n  {name} sessions [project-path] [--engine ENGINE]  List sessions (defaults to current folder)\n  {name} history [log|project] [session-id] [--engine ENGINE]  Print timeline (defaults to latest for current folder)\n  {name} skills [log|project] [session-id] [--engine ENGINE] [--json] [--full]  Analyze skill spans (defaults to latest for current folder)\n  {name} update                           Self-update from GitHub Releases (macOS/Linux)\n  {name} --help | --version\n\nENGINE:\n  --engine NAME  Filter by engine: all|codex|claude|gemini|opencode (default: all)\n\nSESSIONS FLAGS:\n  --limit N      Max sessions to print (default: 10)\n  --offset N     Skip first N sessions (default: 0)\n  --size         Include file size bytes column\n\nHISTORY FLAGS:\n  --limit N      Max timeline items to print (default: 10)\n  --offset N     Skip first N timeline items (default: 0)\n  --id ID        Select a session id (positional session-id also supported)\n  --full         Include full details (tool outputs, long messages)\n  --size         Print stats to stderr (bytes + item counts)\n\nSKILLS FLAGS:\n  --id ID        Select a session id (positional session-id also supported)\n  --json         Output structured JSON\n  --full         Include per-span tool call summaries\n\nOUTPUT:\n  projects: project_name<TAB>project_path<TAB>session_count\n  sessions: started_at<TAB>session_id<TAB>title<TAB>log_path  (with --size adds file_size_bytes before log_path)\n\nENV:\n  CODEX_SESSIONS_DIR    Override Codex sessions dir (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n  CLAUDE_PROJECTS_DIR   Override Claude projects dir (default: ~/.claude/projects)\n",
+        "{name} — manage coding-agent sessions (Codex + Claude + Gemini + OpenCode)\n\nUSAGE:\n  {name} [--engine ENGINE]                Start the TUI\n  {name} projects [--engine ENGINE]       List discovered projects\n  {name} sessions [project-path] [--engine ENGINE]  List sessions (defaults to current folder)\n  {name} history [log|project] [session-id] [--engine ENGINE]  Print timeline (defaults to latest for current folder)\n  {name} skills [log|project] [session-id] [--engine ENGINE] [--json] [--full]  Analyze skill spans (defaults to latest for current folder)\n  {name} serve                            Run as a remote CCBox behind NAT\n  {name} update                           Self-update from GitHub Releases (macOS/Linux)\n  {name} --help | --version\n\nENGINE:\n  --engine NAME  Filter by engine: all|codex|claude|gemini|opencode (default: all)\n\nSERVE FLAGS:\n  --label NAME         Optional label (max 64 chars)\n  --relay-domain DOM   Relay domain (default: ccbox.app)\n  --relay-url URL      Full wss:// URL (dev override)\n  --relay BASE         Relay base wss:// URL (connects to BASE/ccbox?guid=<ccbox_id>)\n  --pairing-code CODE  Optional pairing code override for QR URL\n  --no-relay           Run local mode (no public relay)\n  --listen ADDR        Local bind addr (default: 127.0.0.1:8787)\n  --enable-shell       Enable shell-v1 (disabled by default)\n  --print-identity     Print ccbox_id + public key then exit\n\nSESSIONS FLAGS:\n  --limit N      Max sessions to print (default: 10)\n  --offset N     Skip first N sessions (default: 0)\n  --size         Include file size bytes column\n\nHISTORY FLAGS:\n  --limit N      Max timeline items to print (default: 10)\n  --offset N     Skip first N timeline items to print (default: 0)\n  --id ID        Select a session id (positional session-id also supported)\n  --full         Include full details (tool outputs, long messages)\n  --size         Print stats to stderr (bytes + item counts)\n\nSKILLS FLAGS:\n  --id ID        Select a session id (positional session-id also supported)\n  --json         Output structured JSON\n  --full         Include per-span tool call summaries\n\nOUTPUT:\n  projects: project_name<TAB>project_path<TAB>session_count\n  sessions: started_at<TAB>session_id<TAB>title<TAB>log_path  (with --size adds file_size_bytes before log_path)\n\nENV:\n  CODEX_SESSIONS_DIR    Override Codex sessions dir (default: ~/.codex/sessions; Windows: %USERPROFILE%\\.codex\\sessions)\n  CLAUDE_PROJECTS_DIR   Override Claude projects dir (default: ~/.claude/projects)\n",
         name = env!("CARGO_PKG_NAME")
     );
     let mut out = io::stdout().lock();

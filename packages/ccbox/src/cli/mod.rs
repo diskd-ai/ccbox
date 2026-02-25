@@ -17,6 +17,7 @@ pub enum CliInvocation {
     PrintHelp,
     PrintVersion,
     Tui { engine: Option<SessionEngine> },
+    Serve(crate::remote::ServeOptions),
     Command(CliCommand),
 }
 
@@ -103,6 +104,86 @@ pub fn parse_invocation(args: &[String]) -> Result<CliInvocation, CliParseError>
     };
 
     match subcommand.as_str() {
+        "serve" => {
+            let mut label: Option<String> = None;
+            let mut relay_domain = "ccbox.app".to_string();
+            let mut relay_url: Option<String> = None;
+            let mut relay_base_url: Option<String> = None;
+            let mut pairing_code: Option<String> = None;
+            let mut enable_shell = false;
+            let mut print_identity = false;
+            let mut no_relay = false;
+            let mut listen_addr: Option<String> = None;
+
+            let mut args = iter.peekable();
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--label" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--label".to_string())
+                        })?;
+                        label = Some((*value).to_string());
+                    }
+                    "--relay-domain" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--relay-domain".to_string())
+                        })?;
+                        relay_domain = (*value).to_string();
+                    }
+                    "--relay-url" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--relay-url".to_string())
+                        })?;
+                        relay_url = Some((*value).to_string());
+                    }
+                    "--relay" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--relay".to_string())
+                        })?;
+                        relay_base_url = Some((*value).to_string());
+                    }
+                    "--pairing-code" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--pairing-code".to_string())
+                        })?;
+                        pairing_code = Some((*value).to_string());
+                    }
+                    "--no-relay" => {
+                        no_relay = true;
+                    }
+                    "--listen" => {
+                        let value = args.next().ok_or_else(|| {
+                            CliParseError::MissingFlagValue("--listen".to_string())
+                        })?;
+                        listen_addr = Some((*value).to_string());
+                    }
+                    "--enable-shell" => {
+                        enable_shell = true;
+                    }
+                    "--print-identity" => {
+                        print_identity = true;
+                    }
+                    _ if arg.starts_with('-') => {
+                        return Err(CliParseError::UnknownFlag(arg.to_string()));
+                    }
+                    _ => {
+                        return Err(CliParseError::UnexpectedArgument(arg.to_string()));
+                    }
+                }
+            }
+
+            Ok(CliInvocation::Serve(crate::remote::ServeOptions {
+                label,
+                relay_domain,
+                relay_url,
+                relay_base_url,
+                pairing_code,
+                enable_shell,
+                print_identity,
+                no_relay,
+                listen_addr,
+            }))
+        }
         "projects" => {
             let mut engine: Option<SessionEngine> = global_engine;
 

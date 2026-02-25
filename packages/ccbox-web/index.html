@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>ccbox remote (minimal)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0f17;
+        --panel: #111827;
+        --muted: #9ca3af;
+        --fg: #e5e7eb;
+        --border: #1f2937;
+        --accent: #60a5fa;
+        --bad: #f87171;
+        --good: #34d399;
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Helvetica,
+          Arial,
+          "Apple Color Emoji",
+          "Segoe UI Emoji";
+      }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        margin: 0;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 12px 0;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 420px 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin: 10px 0 6px 0;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #0b1220;
+        color: var(--fg);
+        outline: none;
+      }
+      textarea,
+      select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #0b1220;
+        color: var(--fg);
+        outline: none;
+      }
+      input:focus {
+        border-color: #2563eb;
+      }
+      textarea:focus,
+      select:focus {
+        border-color: #2563eb;
+      }
+      textarea {
+        min-height: 96px;
+        resize: vertical;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      button {
+        appearance: none;
+        border: 1px solid var(--border);
+        background: #0b1220;
+        color: var(--fg);
+        padding: 10px 12px;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #334155;
+      }
+      button.primary {
+        border-color: #1d4ed8;
+        background: #0b1b3a;
+      }
+      button.primary:hover {
+        border-color: #2563eb;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+          "Courier New", monospace;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      .status {
+        font-size: 12px;
+        margin-top: 10px;
+        color: var(--muted);
+      }
+      .status .good {
+        color: var(--good);
+      }
+      .status .bad {
+        color: var(--bad);
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th,
+      td {
+        border-bottom: 1px solid var(--border);
+        padding: 10px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+        font-size: 12px;
+      }
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ccbox remote (minimal)</h1>
+    <div class="grid">
+      <div class="card">
+        <div class="status" id="statusLine">Loading identity…</div>
+
+        <label>Connect (GUID or URL)</label>
+        <input
+          id="connectInput"
+          class="mono"
+          placeholder="f47ac10b-58cc-4372-a567-0e02b2c3d479  OR  wss://<guid>.ccbox.app/client"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+        />
+
+        <div class="row">
+          <button class="primary" id="connectBtn">Connect</button>
+          <button id="refreshBtn" disabled>Refresh projects</button>
+          <button id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+
+        <label>Device ID</label>
+        <div class="mono" id="deviceId">(loading)</div>
+
+        <label>Device public key (base64, raw 32 bytes)</label>
+        <div class="mono" id="devicePubKey">(loading)</div>
+
+        <label>Pairing code (from relay CLI)</label>
+        <input
+          id="pairCodeInput"
+          class="mono"
+          placeholder="ABCD1234"
+          autocomplete="one-time-code"
+          autocapitalize="off"
+          spellcheck="false"
+        />
+
+        <div class="row">
+          <button id="pairBtn">Pair device</button>
+        </div>
+        <div class="status mono" id="pairStatus">(not paired)</div>
+
+        <div class="row">
+          <button id="resetIdentityBtn">Reset identity</button>
+        </div>
+
+        <label>Last error</label>
+        <pre class="mono" id="lastError">(none)</pre>
+      </div>
+
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: baseline">
+          <div>
+            <div style="font-size: 12px; color: var(--muted)">projects.list</div>
+            <div class="mono" id="rpcMeta">not connected</div>
+          </div>
+        </div>
+
+        <div style="margin-top: 10px">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 70%">Path</th>
+                <th style="width: 15%">Sessions</th>
+                <th style="width: 15%">Last seen</th>
+              </tr>
+            </thead>
+            <tbody id="projectsTbody">
+              <tr>
+                <td class="mono" colspan="3" style="color: var(--muted)">No data.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid var(--border); margin: 18px 0" />
+
+        <div style="font-size: 12px; color: var(--muted)">agents.spawn</div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px">
+          <div>
+            <label>Engine</label>
+            <select id="engineSelect" class="mono">
+              <option value="codex">codex</option>
+              <option value="claude">claude</option>
+            </select>
+          </div>
+          <div>
+            <label>I/O mode</label>
+            <select id="ioModeSelect" class="mono">
+              <option value="pipes">pipes</option>
+              <option value="tty">tty</option>
+            </select>
+          </div>
+        </div>
+
+        <label>Project path</label>
+        <input
+          id="projectPathInput"
+          class="mono"
+          placeholder="/path/to/project"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+        />
+
+        <label>Prompt</label>
+        <textarea id="promptInput" class="mono" placeholder="What should the agent do?"></textarea>
+
+        <div class="row">
+          <button class="primary" id="spawnBtn" disabled>Spawn agent</button>
+          <button id="killBtn" disabled>Kill</button>
+        </div>
+        <div class="status mono" id="spawnStatus">(no process)</div>
+
+        <div style="font-size: 12px; color: var(--muted); margin-top: 14px">process logs</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px">
+          <div>
+            <label>Stream</label>
+            <select id="logStreamSelect" class="mono">
+              <option value="combined">combined</option>
+              <option value="stdout">stdout</option>
+              <option value="stderr">stderr</option>
+            </select>
+          </div>
+          <div>
+            <label>Offset</label>
+            <div class="mono" id="logOffset">(not subscribed)</div>
+          </div>
+        </div>
+
+        <div class="row">
+          <button id="subscribeLogsBtn" disabled>Subscribe logs</button>
+          <button id="clearLogsBtn" disabled>Clear</button>
+        </div>
+
+        <label>Logs</label>
+        <pre
+          class="mono"
+          id="logsPre"
+          style="
+            margin-top: 8px;
+            max-height: 360px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            padding: 10px;
+            border-radius: 10px;
+            background: #0b1220;
+          "
+        ></pre>
+
+        <hr style="border: 0; border-top: 1px solid var(--border); margin: 18px 0" />
+
+        <div style="font-size: 12px; color: var(--muted)">sessions</div>
+
+        <div class="row">
+          <button id="sessionsListBtn" disabled>List sessions</button>
+        </div>
+
+        <div style="margin-top: 10px">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 20%">Engine</th>
+                <th style="width: 25%">Started</th>
+                <th style="width: 20%">Session ID</th>
+                <th style="width: 35%">Title</th>
+              </tr>
+            </thead>
+            <tbody id="sessionsTbody">
+              <tr>
+                <td class="mono" colspan="4" style="color: var(--muted)">No sessions loaded.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <label>Session ID</label>
+        <input
+          id="sessionIdInput"
+          class="mono"
+          placeholder="session id"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+        />
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px">
+          <div>
+            <label>Timeline limit</label>
+            <input id="timelineLimitInput" class="mono" value="200" />
+          </div>
+          <div>
+            <label>Cursor (bytes)</label>
+            <div class="mono" id="timelineCursor">(none)</div>
+          </div>
+        </div>
+
+        <div class="row">
+          <button id="timelineGetBtn" disabled>Get timeline</button>
+          <button id="timelineSubBtn" disabled>Subscribe</button>
+          <button id="timelineClearBtn" disabled>Clear</button>
+        </div>
+
+        <label>Timeline (tail)</label>
+        <pre
+          class="mono"
+          id="timelinePre"
+          style="
+            margin-top: 8px;
+            max-height: 360px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            padding: 10px;
+            border-radius: 10px;
+            background: #0b1220;
+          "
+        ></pre>
+
+        <hr style="border: 0; border-top: 1px solid var(--border); margin: 18px 0" />
+
+        <div style="font-size: 12px; color: var(--muted)">tasks</div>
+
+        <div class="row">
+          <button id="tasksListBtn" disabled>List tasks</button>
+        </div>
+
+        <div style="margin-top: 10px">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 30%">Updated</th>
+                <th style="width: 40%">Title</th>
+                <th style="width: 30%">Task ID</th>
+              </tr>
+            </thead>
+            <tbody id="tasksTbody">
+              <tr>
+                <td class="mono" colspan="3" style="color: var(--muted)">No tasks loaded.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <label>Task ID</label>
+        <input
+          id="taskIdInput"
+          class="mono"
+          placeholder="task id"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+        />
+
+        <label>Task body (uses current Project path above)</label>
+        <textarea id="taskBodyInput" class="mono" placeholder="Task description…"></textarea>
+
+        <div class="row">
+          <button id="taskCreateBtn" disabled>Create</button>
+          <button id="taskDeleteBtn" disabled>Delete</button>
+          <button class="primary" id="taskSpawnBtn" disabled>Spawn task</button>
+        </div>
+
+        <div class="status mono" id="taskStatus">(no tasks)</div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
