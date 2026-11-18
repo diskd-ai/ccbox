@@ -293,7 +293,7 @@ fn detect_log_format(path: &Path) -> LogFormat {
 }
 
 fn looks_like_claude_jsonl(path: &Path) -> bool {
-    for value in read_jsonl_values(path, 50) {
+    for value in read_jsonl_values(path, 100) {
         let line_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
         if matches!(
             line_type,
