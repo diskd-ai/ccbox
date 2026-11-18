@@ -1,3 +1,5 @@
+//! Session detail: loads the timeline and the last assistant output of one session from its log.
+
 use crate::domain::{
     ParsedLogLine, SessionTimeline, TimelineItem, TimelineItemKind, parse_log_value,
 };
