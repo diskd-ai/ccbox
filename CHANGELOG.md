@@ -8,6 +8,17 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.23] - 2026-11-19
+
+### Changes
+
+- Remote control: `ccbox serve` runs ccbox as a remote instance that a browser reaches through a relay you host (`--relay-domain`, `--relay`, `--relay-url`), or directly on your network (`--no-relay --listen ADDR`). Devices pair with a code; ccbox keeps the list of trusted devices and authenticates them end to end, the relay only forwards traffic.
+- Remote control: the relay server (`packages/ccbox-relay`), the web dashboard (`packages/ccbox-remote-web`) and a deploy script for both (`scripts/deploy.sh`) are part of the repository.
+- Delete: OpenCode sessions are archived in the OpenCode database; local logs of the other engines are deleted as before.
+- CLI: `ccbox skills` prints the share of session time spent inside skills.
+
+### Fixes
+
 ## [0.1.22] - 2026-11-19
 
 ### Changes

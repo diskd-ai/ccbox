@@ -201,6 +201,16 @@ ccbox history --limit 200 --offset 0 --full --size
 ccbox update
 ```
 
+Remote control (reach ccbox from a browser):
+
+```bash
+ccbox serve --no-relay --listen 127.0.0.1:8787   # on your own network, no relay
+ccbox serve --relay wss://relay.example.com      # through a relay you host
+ccbox serve --print-identity                     # print ccbox_id + public key
+```
+
+The relay (`packages/ccbox-relay`) and the web dashboard (`packages/ccbox-remote-web`) are in this repository; `scripts/deploy.sh` installs both on a server. A device pairs with a code that `ccbox serve` prints; ccbox keeps the trusted devices and authenticates them end to end.
+
 CLI details:
 - Auto-selects the project for the current folder (or nearest parent) when `project-path` is omitted.
 - Pagination: `sessions` and `history` default to `--limit 10`; use `--limit N` and `--offset N`.
