@@ -69,19 +69,19 @@ Use cases:
 - Save time and tokens by standardizing the workflows that actually worked.
 
 How to use:
-- Install: `npx skills add diskd-ai/ccbox --skill ccbox-insights --global --yes`
+- Install: `npx skills add aileron-tech/ccbox --skill ccbox-insights --global --yes`
 - Prompt: “Use the ccbox-insights skill to analyze the latest N sessions for this project and propose AGENTS.md additions.”
 
 ## Install
 
 Quick install from GitHub Releases (macOS/Linux):
 ```sh
-curl -fsSL -H 'Cache-Control: no-cache' -o - https://raw.githubusercontent.com/diskd-ai/ccbox/main/scripts/install.sh | /bin/bash
+curl -fsSL -H 'Cache-Control: no-cache' -o - https://raw.githubusercontent.com/aileron-tech/ccbox/main/scripts/install.sh | /bin/bash
 ```
 
 Homebrew (recommended):
 ```sh
-brew tap diskd-ai/ccbox
+brew tap aileron-tech/ccbox
 brew install ccbox
 ```
 
@@ -205,7 +205,7 @@ This repo ships agent skills:
 Install the code-insights skill (`ccbox-insights`):
 
 ```bash
-npx skills add diskd-ai/ccbox --skill ccbox-insights --global --yes
+npx skills add aileron-tech/ccbox --skill ccbox-insights --global --yes
 ```
 
 Analyzes unsuccessful tool calls and suggests additive fixes in `AGENTS.md` (project-level).
@@ -215,8 +215,8 @@ Helps save time and tokens.
 Install one or both:
 
 ```bash
-npx skills add diskd-ai/ccbox --skill ccbox --global --yes
-npx skills add diskd-ai/ccbox --skill ccbox-insights --global --yes
+npx skills add aileron-tech/ccbox --skill ccbox --global --yes
+npx skills add aileron-tech/ccbox --skill ccbox-insights --global --yes
 ```
 
 No additional setup is required after `npx skills add ... --global`.

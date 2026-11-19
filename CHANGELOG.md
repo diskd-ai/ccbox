@@ -8,6 +8,14 @@ All notable user-facing changes to `ccbox` are documented in this file.
 
 ### Fixes
 
+## [0.1.22] - 2026-11-19
+
+### Changes
+
+- The project moved to `github.com/aileron-tech/ccbox`: the install script, `ccbox update`, the Homebrew tap (`brew tap aileron-tech/ccbox`) and the skill install commands now use the new address. Existing `diskd-ai/ccbox` links keep working through GitHub redirects.
+
+### Fixes
+
 ## [0.1.21] - 2026-02-21
 
 ### Changes

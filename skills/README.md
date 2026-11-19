@@ -5,9 +5,9 @@ This repository contains installable skills for agents (Codex, Claude Code, Gemi
 Install via `skills.sh`:
 
 - `ccbox`:
-  - Install: `npx skills add diskd-ai/ccbox --skill ccbox --global --yes`
+  - Install: `npx skills add aileron-tech/ccbox --skill ccbox --global --yes`
   - Docs: `skills/ccbox/README.md`
 - `ccbox-insights`:
-  - Install: `npx skills add diskd-ai/ccbox --skill ccbox-insights --global --yes`
+  - Install: `npx skills add aileron-tech/ccbox --skill ccbox-insights --global --yes`
   - Docs: `skills/ccbox-insights/README.md`
 

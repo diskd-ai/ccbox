@@ -1,6 +1,6 @@
 # ccbox Skill
 
-> **Install:** `npx skills add diskd-ai/ccbox --skill ccbox --global --yes` | [skills.sh](https://skills.sh)
+> **Install:** `npx skills add aileron-tech/ccbox --skill ccbox --global --yes` | [skills.sh](https://skills.sh)
 
 Inspect and summarize local Codex/Claude session logs via the `ccbox` CLI (`projects`, `sessions`, `history`).
 
