@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="diskd-ai/ccbox"
+REPO="aileron-tech/ccbox"
 BIN_NAME="ccbox"
 
 INSTALL_DIR="${CCBOX_INSTALL_DIR:-"${HOME}/.local/bin"}"

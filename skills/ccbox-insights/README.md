@@ -1,6 +1,6 @@
 # ccbox-insights Skill
 
-> **Install:** `npx skills add diskd-ai/ccbox --skill ccbox-insights --global --yes` | [skills.sh](https://skills.sh)
+> **Install:** `npx skills add aileron-tech/ccbox --skill ccbox-insights --global --yes` | [skills.sh](https://skills.sh)
 
 Analyze session logs with the `ccbox` CLI and produce an evidence-based "insights" report: what tools failed, why they failed, and copy-ready instruction snippets that reduce future tool-call errors.
 

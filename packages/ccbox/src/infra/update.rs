@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-const REPO: &str = "diskd-ai/ccbox";
+const REPO: &str = "aileron-tech/ccbox";
 const BIN_NAME: &str = "ccbox";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
