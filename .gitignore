@@ -1,6 +1,9 @@
 /target
+target-linux/
 /.idea
 /.vscode
 # Local agent artifacts
 /.agents/
 .DS_Store
+node_modules/
+dist/
