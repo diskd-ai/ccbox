@@ -176,14 +176,12 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
                     // Codex emits many duplicate token_count events (often identical 2–3x).
                     // Keep only one entry per unique token_count payload (the last occurrence).
                     let fingerprint = item.detail.clone();
-                    if last_token_count_fingerprint.as_deref() == Some(fingerprint.as_str()) {
-                        if let Some(index) = last_token_count_index {
-                            if index < items.len()
-                                && items[index].kind == TimelineItemKind::TokenCount
-                            {
-                                items.remove(index);
-                            }
-                        }
+                    if last_token_count_fingerprint.as_deref() == Some(fingerprint.as_str())
+                        && let Some(index) = last_token_count_index
+                        && index < items.len()
+                        && items[index].kind == TimelineItemKind::TokenCount
+                    {
+                        items.remove(index);
                     }
                     last_token_count_fingerprint = Some(fingerprint);
                     last_token_count_index = None;
@@ -191,14 +189,13 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
 
                 if is_user_prompt {
                     let detail = item.detail.trim_end();
-                    if let Some(turn_id) = item.turn_id.as_deref() {
-                        if last_user_prompt_by_turn
+                    if let Some(turn_id) = item.turn_id.as_deref()
+                        && last_user_prompt_by_turn
                             .get(turn_id)
                             .is_some_and(|prev| prev.trim_end() == detail)
-                        {
-                            pending_aborted_prompt = None;
-                            continue;
-                        }
+                    {
+                        pending_aborted_prompt = None;
+                        continue;
                     }
                     if pending_aborted_prompt
                         .as_deref()
@@ -210,18 +207,18 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
                     pending_aborted_prompt = None;
                 }
 
-                if let Some(turn_id) = item.turn_id.as_deref() {
-                    if last_emitted_turn_id.as_deref() != Some(turn_id) {
-                        if items.len() >= MAX_TIMELINE_ITEMS {
-                            truncated = true;
-                            break;
-                        }
-                        items.push(make_turn_item(
-                            turn_id,
-                            turn_context_line_nos.get(turn_id).copied(),
-                        ));
-                        last_emitted_turn_id = Some(turn_id.to_string());
+                if let Some(turn_id) = item.turn_id.as_deref()
+                    && last_emitted_turn_id.as_deref() != Some(turn_id)
+                {
+                    if items.len() >= MAX_TIMELINE_ITEMS {
+                        truncated = true;
+                        break;
                     }
+                    items.push(make_turn_item(
+                        turn_id,
+                        turn_context_line_nos.get(turn_id).copied(),
+                    ));
+                    last_emitted_turn_id = Some(turn_id.to_string());
                 }
 
                 if items.len() >= MAX_TIMELINE_ITEMS {
@@ -229,13 +226,11 @@ pub fn load_session_timeline(path: &Path) -> Result<SessionTimeline, LoadSession
                     break;
                 }
                 items.push(item);
-                if is_user_prompt {
-                    if let Some(last) = items.last() {
-                        let detail = last.detail.trim_end().to_string();
-                        last_user_prompt = Some(detail.clone());
-                        if let Some(turn_id) = last.turn_id.as_deref() {
-                            last_user_prompt_by_turn.insert(turn_id.to_string(), detail);
-                        }
+                if is_user_prompt && let Some(last) = items.last() {
+                    let detail = last.detail.trim_end().to_string();
+                    last_user_prompt = Some(detail.clone());
+                    if let Some(turn_id) = last.turn_id.as_deref() {
+                        last_user_prompt_by_turn.insert(turn_id.to_string(), detail);
                     }
                 }
 

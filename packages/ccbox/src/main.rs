@@ -13,13 +13,12 @@ use crate::domain::{
     parse_session_meta_line,
 };
 use crate::infra::{
-    AttachTtyError, KillProcessError, ProcessExit, ProcessManager, ProcessSignal, ResizeTtyError,
-    ResolveClaudeProjectsDirError, ResolveGeminiRootDirError, ResolveOpenCodeDbPathError,
-    SessionIndex, TaskStore, WatchSignal, WriteTtyError, delete_session_logs,
-    fork_codex_session_log_at_cut, load_last_assistant_output, load_session_index,
-    load_session_timeline, read_from_offset, read_tail, refresh_session_index,
-    resolve_ccbox_state_dir, resolve_claude_projects_dir, resolve_gemini_root_dir,
-    resolve_opencode_db_path, resolve_sessions_dir, save_session_index, scan_all_sessions,
+    AttachTtyError, KillProcessError, ProcessExit, ProcessManager, ProcessSignal, ProviderRegistry,
+    ProviderWatchTarget, ProviderWatchTargetKind, ResizeTtyError, SessionIndex, TaskStore,
+    WatchSignal, WriteTtyError, delete_sessions_by_log_paths, fork_codex_session_log_at_cut,
+    load_last_output_for_session, load_session_index, load_session_timeline,
+    load_timeline_for_session, read_from_offset, read_tail, refresh_session_index,
+    resolve_ccbox_state_dir, resolve_sessions_dir, save_session_index, scan_all_sessions,
     set_session_alias, set_session_project, watch_session_file, watch_sessions_dir,
     watch_sqlite_db_family,
 };
@@ -85,6 +84,57 @@ enum SessionsDirScanSignal {
     },
 }
 
+#[derive(Debug)]
+struct ProviderRuntimeWatcher {
+    provider: crate::domain::SessionEngine,
+    watcher: crate::infra::SessionsDirWatcher,
+}
+
+fn build_provider_runtime_watchers(
+    sessions_dir: &std::path::Path,
+) -> (Vec<ProviderRuntimeWatcher>, Vec<String>) {
+    let registry = ProviderRegistry::new_default(sessions_dir);
+    let mut watchers: Vec<ProviderRuntimeWatcher> = Vec::new();
+    let mut notices: Vec<String> = Vec::new();
+
+    for target in registry.watch_targets() {
+        match create_provider_watcher(&target) {
+            Ok(Some(watcher)) => watchers.push(ProviderRuntimeWatcher {
+                provider: target.provider,
+                watcher,
+            }),
+            Ok(None) => {}
+            Err(error) => notices.push(format!(
+                "{} auto-rescan disabled: {error} (Ctrl+R to rescan)",
+                target.provider.label()
+            )),
+        }
+    }
+
+    (watchers, notices)
+}
+
+fn create_provider_watcher(
+    target: &ProviderWatchTarget,
+) -> Result<Option<crate::infra::SessionsDirWatcher>, String> {
+    match target.kind {
+        ProviderWatchTargetKind::Directory => {
+            if !target.path.is_dir() {
+                return Ok(None);
+            }
+            watch_sessions_dir(&target.path)
+                .map(Some)
+                .map_err(|error| error.to_string())
+        }
+        ProviderWatchTargetKind::SqliteFamily => {
+            if !target.path.is_file() {
+                return Ok(None);
+            }
+            watch_sqlite_db_family(&target.path).map_err(|error| error.to_string())
+        }
+    }
+}
+
 fn main() {
     if let Err(error) = run_main() {
         let mut err = io::stderr().lock();
@@ -133,6 +183,48 @@ fn print_help() {
     );
     let mut out = io::stdout().lock();
     let _ = write!(out, "{text}");
+}
+
+fn format_session_delete_notice(report: &crate::infra::ProviderDeleteReport) -> String {
+    let outcome = &report.outcome;
+    let mut message = format!("Deleted {} session log(s).", outcome.total_removed());
+
+    if outcome.archived > 0 {
+        message.push_str(&format!(
+            " {} OpenCode session(s) archived.",
+            outcome.archived
+        ));
+    }
+    if outcome.failed > 0 {
+        message.push_str(&format!(" {} failed.", outcome.failed));
+    }
+    if outcome.missing > 0 {
+        message.push_str(&format!(
+            " {} OpenCode session(s) already archived.",
+            outcome.missing
+        ));
+    }
+    if outcome.skipped_outside_allowed_roots > 0 {
+        message.push_str(&format!(
+            " {} skipped (outside allowed session roots).",
+            outcome.skipped_outside_allowed_roots
+        ));
+    }
+    if !report.errors.is_empty() {
+        message.push(' ');
+        message.push_str(&report.errors.join(" | "));
+    }
+
+    message
+}
+
+fn collect_all_sessions(model: &AppModel) -> Vec<crate::domain::SessionSummary> {
+    model
+        .data
+        .projects
+        .iter()
+        .flat_map(|project| project.sessions.iter().cloned())
+        .collect::<Vec<_>>()
 }
 
 fn run_tui(engine: Option<crate::domain::SessionEngine>) -> Result<(), crate::app::AppError> {
@@ -220,73 +312,11 @@ fn run(
         }
     };
 
-    let codex_watcher = match watch_sessions_dir(&model.data.sessions_dir) {
-        Ok(watcher) => Some(watcher),
-        Err(error) => {
-            *model = model.with_notice(Some(format!(
-                "Auto-rescan disabled: {error} (Ctrl+R to rescan)"
-            )));
-            None
-        }
-    };
-
-    let claude_watcher = match resolve_claude_projects_dir() {
-        Ok(dir) => {
-            if dir.exists() {
-                match watch_sessions_dir(&dir) {
-                    Ok(watcher) => Some(watcher),
-                    Err(error) => {
-                        *model = model.with_notice(Some(format!(
-                            "Claude auto-rescan disabled: {error} (Ctrl+R to rescan)"
-                        )));
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        }
-        Err(ResolveClaudeProjectsDirError::HomeDirNotFound) => None,
-    };
-
-    let gemini_watcher = match resolve_gemini_root_dir() {
-        Ok(root) => {
-            let tmp_dir = root.join("tmp");
-            if tmp_dir.exists() {
-                match watch_sessions_dir(&tmp_dir) {
-                    Ok(watcher) => Some(watcher),
-                    Err(error) => {
-                        *model = model.with_notice(Some(format!(
-                            "Gemini auto-rescan disabled: {error} (Ctrl+R to rescan)"
-                        )));
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        }
-        Err(ResolveGeminiRootDirError::HomeDirNotFound) => None,
-    };
-
-    let opencode_watcher = match resolve_opencode_db_path() {
-        Ok(db_path) => {
-            if db_path.is_file() {
-                match watch_sqlite_db_family(&db_path) {
-                    Ok(watcher) => watcher,
-                    Err(error) => {
-                        *model = model.with_notice(Some(format!(
-                            "OpenCode auto-rescan disabled: {error} (Ctrl+R to rescan)"
-                        )));
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        }
-        Err(ResolveOpenCodeDbPathError::HomeDirNotFound) => None,
-    };
+    let (provider_watchers, watcher_notices) =
+        build_provider_runtime_watchers(&model.data.sessions_dir);
+    if !watcher_notices.is_empty() {
+        *model = model.with_notice(Some(watcher_notices.join(" | ")));
+    }
     let (sessions_scan_tx, sessions_scan_rx) = channel::<SessionsDirScanSignal>();
     let mut sessions_scan_in_flight = false;
     let debounce = Duration::from_millis(900);
@@ -425,86 +455,21 @@ fn run(
                     let session = detail_view.session.clone();
                     session_detail_reload_in_flight_for = Some(session.log_path.clone());
                     let tx = session_detail_tx.clone();
+                    let sessions_dir = model.data.sessions_dir.clone();
                     std::thread::spawn(move || {
-                        let log_path = match crate::infra::prepare_session_log_path(&session) {
-                            Ok(path) => path,
-                            Err(error) => {
-                                let _ = tx.send(SessionDetailTimelineSignal::Loaded {
-                                    log_path: session.log_path.clone(),
-                                    result: Err(error.to_string()),
-                                });
-                                return;
-                            }
-                        };
-
-                        let result = match load_session_timeline(&log_path) {
-                            Ok(timeline) => Ok(timeline),
-                            Err(error) => Err(error.to_string()),
-                        };
-                        let _ = tx.send(SessionDetailTimelineSignal::Loaded { log_path, result });
+                        let result = load_timeline_for_session(&sessions_dir, &session)
+                            .map_err(|error| error.to_string());
+                        let _ = tx.send(SessionDetailTimelineSignal::Loaded {
+                            log_path: session.log_path.clone(),
+                            result,
+                        });
                     });
                 }
             }
         }
 
-        if let Some(watcher) = &codex_watcher {
-            while let Some(signal) = watcher.try_recv() {
-                match signal {
-                    WatchSignal::Changed => {
-                        let now = Instant::now();
-                        pending_rescan = true;
-                        rescan_deadline = Some(now + debounce);
-                        if first_change_at.is_none() {
-                            first_change_at = Some(now);
-                        }
-                    }
-                    WatchSignal::Error(message) => {
-                        *model = model.with_notice(Some(format!("Watcher error: {message}")));
-                    }
-                }
-            }
-        }
-
-        if let Some(watcher) = &claude_watcher {
-            while let Some(signal) = watcher.try_recv() {
-                match signal {
-                    WatchSignal::Changed => {
-                        let now = Instant::now();
-                        pending_rescan = true;
-                        rescan_deadline = Some(now + debounce);
-                        if first_change_at.is_none() {
-                            first_change_at = Some(now);
-                        }
-                    }
-                    WatchSignal::Error(message) => {
-                        *model =
-                            model.with_notice(Some(format!("Claude watcher error: {message}")));
-                    }
-                }
-            }
-        }
-
-        if let Some(watcher) = &gemini_watcher {
-            while let Some(signal) = watcher.try_recv() {
-                match signal {
-                    WatchSignal::Changed => {
-                        let now = Instant::now();
-                        pending_rescan = true;
-                        rescan_deadline = Some(now + debounce);
-                        if first_change_at.is_none() {
-                            first_change_at = Some(now);
-                        }
-                    }
-                    WatchSignal::Error(message) => {
-                        *model =
-                            model.with_notice(Some(format!("Gemini watcher error: {message}")));
-                    }
-                }
-            }
-        }
-
-        if let Some(watcher) = &opencode_watcher {
-            while let Some(signal) = watcher.try_recv() {
+        for provider_watcher in &provider_watchers {
+            while let Some(signal) = provider_watcher.watcher.try_recv() {
                 match signal {
                     WatchSignal::Changed => {
                         let now = Instant::now();
@@ -514,11 +479,14 @@ fn run(
                             first_change_at = Some(now);
                         }
 
-                        if matches!(
-                            &model.view,
-                            crate::app::View::SessionDetail(detail_view)
-                                if detail_view.session.engine == crate::domain::SessionEngine::OpenCode
-                        ) {
+                        if provider_watcher.provider == crate::domain::SessionEngine::OpenCode
+                            && matches!(
+                                &model.view,
+                                crate::app::View::SessionDetail(detail_view)
+                                    if detail_view.session.engine
+                                        == crate::domain::SessionEngine::OpenCode
+                            )
+                        {
                             pending_session_detail_reload = true;
                             session_detail_reload_deadline = Some(now + session_detail_debounce);
                             if session_detail_first_change_at.is_none() {
@@ -527,8 +495,10 @@ fn run(
                         }
                     }
                     WatchSignal::Error(message) => {
-                        *model =
-                            model.with_notice(Some(format!("OpenCode watcher error: {message}")));
+                        *model = model.with_notice(Some(format!(
+                            "{} watcher error: {message}",
+                            provider_watcher.provider.label()
+                        )));
                     }
                 }
             }
@@ -1031,49 +1001,24 @@ fn run(
                         AppCommand::OpenSessionDetail {
                             from_sessions,
                             session,
-                        } => {
-                            let mut session = session;
-                            let log_path = match crate::infra::prepare_session_log_path(&session) {
-                                Ok(path) => path,
-                                Err(error) => {
-                                    *model = model.with_notice(Some(format!(
-                                        "Failed to prepare session log: {error}"
-                                    )));
-                                    continue;
-                                }
-                            };
-                            session.log_path = log_path.clone();
-
-                            match load_session_timeline(&log_path) {
-                                Ok(timeline) => {
-                                    *model = model.open_session_detail(
-                                        from_sessions,
-                                        session,
-                                        timeline.items,
-                                        timeline.turn_contexts,
-                                        timeline.warnings,
-                                        timeline.truncated,
-                                    );
-                                }
-                                Err(error) => {
-                                    *model = model.with_notice(Some(format!(
-                                        "Failed to load session: {error}"
-                                    )));
-                                }
+                        } => match load_timeline_for_session(&model.data.sessions_dir, &session) {
+                            Ok(timeline) => {
+                                *model = model.open_session_detail(
+                                    from_sessions,
+                                    session,
+                                    timeline.items,
+                                    timeline.turn_contexts,
+                                    timeline.warnings,
+                                    timeline.truncated,
+                                );
                             }
-                        }
+                            Err(error) => {
+                                *model = model
+                                    .with_notice(Some(format!("Failed to load session: {error}")));
+                            }
+                        },
                         AppCommand::OpenSessionStats { session } => {
-                            let log_path = match crate::infra::prepare_session_log_path(&session) {
-                                Ok(path) => path,
-                                Err(error) => {
-                                    *model = model.with_notice(Some(format!(
-                                        "Failed to prepare stats: {error}"
-                                    )));
-                                    continue;
-                                }
-                            };
-
-                            match load_session_timeline(&log_path) {
+                            match load_timeline_for_session(&model.data.sessions_dir, &session) {
                                 Ok(timeline) => {
                                     let stats =
                                         compute_session_stats(&session.meta, &timeline.items);
@@ -1094,17 +1039,7 @@ fn run(
                             }
                         }
                         AppCommand::OpenSessionResultPreview { session } => {
-                            let log_path = match crate::infra::prepare_session_log_path(&session) {
-                                Ok(path) => path,
-                                Err(error) => {
-                                    *model = model.with_notice(Some(format!(
-                                        "Failed to prepare result: {error}"
-                                    )));
-                                    continue;
-                                }
-                            };
-
-                            match load_last_assistant_output(&log_path) {
+                            match load_last_output_for_session(&model.data.sessions_dir, &session) {
                                 Ok(result) => {
                                     let output = result.output.unwrap_or_else(|| {
                                         "(No assistant output found.)".to_string()
@@ -1229,15 +1164,13 @@ fn run(
                             let cleared_needs_rescan =
                                 project_path.is_none() && fallback_project.is_none();
 
-                            if let crate::app::View::SessionDetail(detail_view) = &mut model.view {
-                                if detail_view.session.log_path == session.log_path {
-                                    if let Some(cwd) =
-                                        project_path.clone().or_else(|| fallback_project.clone())
-                                    {
-                                        detail_view.session.meta.cwd = cwd.clone();
-                                        detail_view.from_sessions.project_path = cwd;
-                                    }
-                                }
+                            if let crate::app::View::SessionDetail(detail_view) = &mut model.view
+                                && detail_view.session.log_path == session.log_path
+                                && let Some(cwd) =
+                                    project_path.clone().or_else(|| fallback_project.clone())
+                            {
+                                detail_view.session.meta.cwd = cwd.clone();
+                                detail_view.from_sessions.project_path = cwd;
                             }
 
                             let mut sessions = model
@@ -1297,7 +1230,12 @@ fn run(
                                 .iter()
                                 .map(|session| session.log_path.clone())
                                 .collect::<Vec<_>>();
-                            let outcome = delete_session_logs(&model.data.sessions_dir, &log_paths);
+                            let all_sessions = collect_all_sessions(model);
+                            let report = delete_sessions_by_log_paths(
+                                &model.data.sessions_dir,
+                                &all_sessions,
+                                &log_paths,
+                            );
 
                             pending_rescan = false;
                             first_change_at = None;
@@ -1314,18 +1252,7 @@ fn run(
                             refresh_open_project_stats_overlay(model);
                             request_session_index_refresh_optional(&session_index_req_tx, model);
 
-                            let mut message =
-                                format!("Deleted {} session log(s).", outcome.deleted);
-                            if outcome.failed > 0 {
-                                message.push_str(&format!(" {} failed.", outcome.failed));
-                            }
-                            if outcome.skipped_outside_sessions_dir > 0 {
-                                message.push_str(&format!(
-                                    " {} skipped (outside sessions dir).",
-                                    outcome.skipped_outside_sessions_dir
-                                ));
-                            }
-                            *model = model.with_notice(Some(message));
+                            *model = model.with_notice(Some(format_session_delete_notice(&report)));
                         }
                         AppCommand::DeleteProjectLogsBatch { project_paths } => {
                             let mut log_paths = Vec::new();
@@ -1346,7 +1273,12 @@ fn run(
                                 );
                             }
 
-                            let outcome = delete_session_logs(&model.data.sessions_dir, &log_paths);
+                            let all_sessions = collect_all_sessions(model);
+                            let report = delete_sessions_by_log_paths(
+                                &model.data.sessions_dir,
+                                &all_sessions,
+                                &log_paths,
+                            );
 
                             pending_rescan = false;
                             first_change_at = None;
@@ -1363,22 +1295,15 @@ fn run(
                             refresh_open_project_stats_overlay(model);
                             request_session_index_refresh_optional(&session_index_req_tx, model);
 
-                            let mut message =
-                                format!("Deleted {} session log(s).", outcome.deleted);
-                            if outcome.failed > 0 {
-                                message.push_str(&format!(" {} failed.", outcome.failed));
-                            }
-                            if outcome.skipped_outside_sessions_dir > 0 {
-                                message.push_str(&format!(
-                                    " {} skipped (outside sessions dir).",
-                                    outcome.skipped_outside_sessions_dir
-                                ));
-                            }
-                            *model = model.with_notice(Some(message));
+                            *model = model.with_notice(Some(format_session_delete_notice(&report)));
                         }
                         AppCommand::DeleteSessionLog { log_path } => {
-                            let outcome =
-                                delete_session_logs(&model.data.sessions_dir, &[log_path.clone()]);
+                            let all_sessions = collect_all_sessions(model);
+                            let report = delete_sessions_by_log_paths(
+                                &model.data.sessions_dir,
+                                &all_sessions,
+                                std::slice::from_ref(&log_path),
+                            );
 
                             pending_rescan = false;
                             first_change_at = None;
@@ -1395,21 +1320,15 @@ fn run(
                             refresh_open_project_stats_overlay(model);
                             request_session_index_refresh_optional(&session_index_req_tx, model);
 
-                            let mut message =
-                                format!("Deleted {} session log(s).", outcome.deleted);
-                            if outcome.failed > 0 {
-                                message.push_str(&format!(" {} failed.", outcome.failed));
-                            }
-                            if outcome.skipped_outside_sessions_dir > 0 {
-                                message.push_str(&format!(
-                                    " {} skipped (outside sessions dir).",
-                                    outcome.skipped_outside_sessions_dir
-                                ));
-                            }
-                            *model = model.with_notice(Some(message));
+                            *model = model.with_notice(Some(format_session_delete_notice(&report)));
                         }
                         AppCommand::DeleteSessionLogsBatch { log_paths } => {
-                            let outcome = delete_session_logs(&model.data.sessions_dir, &log_paths);
+                            let all_sessions = collect_all_sessions(model);
+                            let report = delete_sessions_by_log_paths(
+                                &model.data.sessions_dir,
+                                &all_sessions,
+                                &log_paths,
+                            );
 
                             pending_rescan = false;
                             first_change_at = None;
@@ -1426,18 +1345,7 @@ fn run(
                             refresh_open_project_stats_overlay(model);
                             request_session_index_refresh_optional(&session_index_req_tx, model);
 
-                            let mut message =
-                                format!("Deleted {} session log(s).", outcome.deleted);
-                            if outcome.failed > 0 {
-                                message.push_str(&format!(" {} failed.", outcome.failed));
-                            }
-                            if outcome.skipped_outside_sessions_dir > 0 {
-                                message.push_str(&format!(
-                                    " {} skipped (outside sessions dir).",
-                                    outcome.skipped_outside_sessions_dir
-                                ));
-                            }
-                            *model = model.with_notice(Some(message));
+                            *model = model.with_notice(Some(format_session_delete_notice(&report)));
                         }
                         AppCommand::SpawnAgentSession {
                             engine,
@@ -1761,10 +1669,9 @@ fn apply_process_exit(model: &mut AppModel, exit: ProcessExit) {
         .processes
         .iter_mut()
         .find(|process| process.id == exit.process_id)
+        && process.status == crate::app::ProcessStatus::Running
     {
-        if process.status == crate::app::ProcessStatus::Running {
-            process.status = crate::app::ProcessStatus::Exited(exit.exit_code);
-        }
+        process.status = crate::app::ProcessStatus::Exited(exit.exit_code);
     }
 }
 
@@ -2075,13 +1982,16 @@ fn trim_string_to_max_bytes(mut value: String, max_bytes: usize) -> String {
 }
 
 fn open_session_detail_by_log_path(model: &mut AppModel, project_path: PathBuf, log_path: PathBuf) {
-    let session = model
+    let known_session = model
         .data
         .projects
         .iter()
         .find(|project| project.project_path == project_path)
         .and_then(|project| project.sessions.iter().find(|s| s.log_path == log_path))
-        .cloned()
+        .cloned();
+
+    let session = known_session
+        .clone()
         .or_else(|| build_session_summary_from_log_path(&log_path));
 
     let Some(session) = session else {
@@ -2089,7 +1999,13 @@ fn open_session_detail_by_log_path(model: &mut AppModel, project_path: PathBuf, 
         return;
     };
 
-    match load_session_timeline(&log_path) {
+    let timeline_result = match &known_session {
+        Some(known) => load_timeline_for_session(&model.data.sessions_dir, known)
+            .map_err(|error| error.to_string()),
+        None => load_session_timeline(&log_path).map_err(|error| error.to_string()),
+    };
+
+    match timeline_result {
         Ok(timeline) => {
             let session_count = model
                 .data

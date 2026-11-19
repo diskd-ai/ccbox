@@ -31,6 +31,17 @@ pub enum SessionEngine {
     OpenCode,
 }
 
+impl SessionEngine {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::Claude => "Claude",
+            Self::Gemini => "Gemini",
+            Self::OpenCode => "OpenCode",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SpawnIoMode {
     Pipes,
@@ -68,6 +79,57 @@ pub struct SessionSummary {
     pub title: String,
     pub file_size_bytes: u64,
     pub file_modified: Option<SystemTime>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionSource {
+    FileLog { path: PathBuf },
+    ProviderNative { key: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionKey {
+    pub provider: SessionEngine,
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionRecord {
+    pub key: SessionKey,
+    pub source: SessionSource,
+    pub project_cwd: PathBuf,
+    pub started_at_rfc3339: String,
+    pub title: String,
+    pub size_bytes: u64,
+    pub modified_at: Option<SystemTime>,
+}
+
+impl SessionRecord {
+    pub fn from_summary(summary: &SessionSummary) -> Self {
+        let source = match summary.engine {
+            SessionEngine::OpenCode => SessionSource::ProviderNative {
+                key: summary.meta.id.clone(),
+            },
+            SessionEngine::Codex | SessionEngine::Claude | SessionEngine::Gemini => {
+                SessionSource::FileLog {
+                    path: summary.log_path.clone(),
+                }
+            }
+        };
+
+        Self {
+            key: SessionKey {
+                provider: summary.engine,
+                id: summary.meta.id.clone(),
+            },
+            source,
+            project_cwd: summary.meta.cwd.clone(),
+            started_at_rfc3339: summary.meta.started_at_rfc3339.clone(),
+            title: summary.title.clone(),
+            size_bytes: summary.file_size_bytes,
+            modified_at: summary.file_modified,
+        }
+    }
 }
 
 pub type ProjectIndex = Vec<ProjectSummary>;

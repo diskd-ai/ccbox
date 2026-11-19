@@ -107,10 +107,10 @@ pub fn set_session_alias(
 
 pub fn apply_session_aliases(sessions: &mut [SessionSummary], aliases: &SessionAliases) {
     for session in sessions {
-        if let Some(title) = aliases.title_for(session.engine, &session.meta.id) {
-            if !title.trim().is_empty() {
-                session.title = title.to_string();
-            }
+        if let Some(title) = aliases.title_for(session.engine, &session.meta.id)
+            && !title.trim().is_empty()
+        {
+            session.title = title.to_string();
         }
     }
 }

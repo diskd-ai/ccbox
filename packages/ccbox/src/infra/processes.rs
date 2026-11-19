@@ -382,11 +382,11 @@ impl ProcessManager {
         let mut child = command.spawn().map_err(SpawnAgentProcessError::Spawn)?;
         let pid = child.id();
 
-        if let Some(mut stdin) = child.stdin.take() {
-            if matches!(engine, AgentEngine::Codex) {
-                let _ = stdin.write_all(prompt.as_bytes());
-                let _ = stdin.write_all(b"\n");
-            }
+        if let Some(mut stdin) = child.stdin.take()
+            && matches!(engine, AgentEngine::Codex)
+        {
+            let _ = stdin.write_all(prompt.as_bytes());
+            let _ = stdin.write_all(b"\n");
         }
 
         let stdout = child.stdout.take().ok_or_else(|| {
@@ -799,24 +799,25 @@ fn pipe_reader_thread(pipe: impl Read, mut file: File, ctx: PipeReaderContext) {
                 let _ = file.flush();
                 write_combined_line(&ctx.combined, ctx.kind, &line);
 
-                if !sent_session_meta && ctx.engine == AgentEngine::Codex {
-                    if let Some((session_id, started_at)) = parse_session_meta_line(&line) {
-                        sent_session_meta = true;
-                        let _ = ctx.tx.send(ProcessSignal::SessionMeta {
+                if !sent_session_meta
+                    && ctx.engine == AgentEngine::Codex
+                    && let Some((session_id, started_at)) = parse_session_meta_line(&line)
+                {
+                    sent_session_meta = true;
+                    let _ = ctx.tx.send(ProcessSignal::SessionMeta {
+                        process_id: ctx.process_id.clone(),
+                        session_id: session_id.clone(),
+                    });
+                    if let Some(log_path) = wait_for_session_log(
+                        &ctx.sessions_dir,
+                        &started_at,
+                        &session_id,
+                        SESSION_LOG_WAIT_TIMEOUT,
+                    ) {
+                        let _ = ctx.tx.send(ProcessSignal::SessionLogPath {
                             process_id: ctx.process_id.clone(),
-                            session_id: session_id.clone(),
+                            log_path,
                         });
-                        if let Some(log_path) = wait_for_session_log(
-                            &ctx.sessions_dir,
-                            &started_at,
-                            &session_id,
-                            SESSION_LOG_WAIT_TIMEOUT,
-                        ) {
-                            let _ = ctx.tx.send(ProcessSignal::SessionLogPath {
-                                process_id: ctx.process_id.clone(),
-                                log_path,
-                            });
-                        }
                     }
                 }
             }
@@ -851,12 +852,11 @@ fn pty_reader_thread(mut reader: Box<dyn Read + Send>, file: File, ctx: PtyReade
         let _ = writer.write_all(chunk);
         let _ = writer.flush();
 
-        if let Ok(mut guard) = ctx.live_tx.lock() {
-            if let Some(tx) = guard.as_ref() {
-                if tx.send(chunk.to_vec()).is_err() {
-                    *guard = None;
-                }
-            }
+        if let Ok(mut guard) = ctx.live_tx.lock()
+            && let Some(tx) = guard.as_ref()
+            && tx.send(chunk.to_vec()).is_err()
+        {
+            *guard = None;
         }
 
         if !sent_session_meta && ctx.engine == AgentEngine::Codex {

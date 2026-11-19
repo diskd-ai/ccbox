@@ -176,14 +176,14 @@ impl AppModel {
                 apply_project_filter(&data.projects, &mut next_view, self.engine_filter);
                 prune_project_selection(&data.projects, &mut next_view);
 
-                if let Some(path) = selected_project_path {
-                    if let Some(pos) = next_view.filtered_indices.iter().position(|index| {
+                if let Some(path) = selected_project_path
+                    && let Some(pos) = next_view.filtered_indices.iter().position(|index| {
                         data.projects
                             .get(*index)
                             .is_some_and(|project| project.project_path == path)
-                    }) {
-                        next_view.selected = pos;
-                    }
+                    })
+                {
+                    next_view.selected = pos;
                 }
 
                 View::Projects(next_view)
@@ -217,20 +217,17 @@ impl AppModel {
                             self.engine_filter,
                         );
                         prune_sessions_selection(&project.sessions, &mut next_view);
-                        if let Some(log_path) = selected_log_path {
-                            if let Some(session_index) = project
+                        if let Some(log_path) = selected_log_path
+                            && let Some(session_index) = project
                                 .sessions
                                 .iter()
                                 .position(|session| session.log_path == log_path)
-                            {
-                                if let Some(pos) = next_view
-                                    .filtered_indices
-                                    .iter()
-                                    .position(|index| *index == session_index)
-                                {
-                                    next_view.session_selected = pos;
-                                }
-                            }
+                            && let Some(pos) = next_view
+                                .filtered_indices
+                                .iter()
+                                .position(|index| *index == session_index)
+                        {
+                            next_view.session_selected = pos;
                         }
 
                         View::Sessions(next_view)
@@ -276,21 +273,18 @@ impl AppModel {
                         );
                         prune_sessions_selection(&project.sessions, &mut next_view.from_sessions);
 
-                        if let Some(log_path) = selected_log_path {
-                            if let Some(session_index) = project
+                        if let Some(log_path) = selected_log_path
+                            && let Some(session_index) = project
                                 .sessions
                                 .iter()
                                 .position(|session| session.log_path == log_path)
-                            {
-                                if let Some(pos) = next_view
-                                    .from_sessions
-                                    .filtered_indices
-                                    .iter()
-                                    .position(|index| *index == session_index)
-                                {
-                                    next_view.from_sessions.session_selected = pos;
-                                }
-                            }
+                            && let Some(pos) = next_view
+                                .from_sessions
+                                .filtered_indices
+                                .iter()
+                                .position(|index| *index == session_index)
+                        {
+                            next_view.from_sessions.session_selected = pos;
                         }
                         View::NewSession(next_view)
                     }
@@ -1743,14 +1737,14 @@ impl TasksView {
         apply_task_filter(&mut self);
         prune_task_selection(&mut self);
 
-        if let Some(task_id) = selected_id {
-            if let Some(pos) = self.filtered_indices.iter().position(|index| {
+        if let Some(task_id) = selected_id
+            && let Some(pos) = self.filtered_indices.iter().position(|index| {
                 self.tasks
                     .get(*index)
                     .is_some_and(|task| task.id == task_id)
-            }) {
-                self.selected = pos;
-            }
+            })
+        {
+            self.selected = pos;
         }
 
         self
@@ -2499,14 +2493,12 @@ fn infer_session_detail_target_view(
                 .sessions
                 .iter()
                 .position(|candidate| candidate.log_path == session.log_path)
-            {
-                if let Some(pos) = from_sessions
+                && let Some(pos) = from_sessions
                     .filtered_indices
                     .iter()
                     .position(|index| *index == selected_index)
-                {
-                    from_sessions.session_selected = pos;
-                }
+            {
+                from_sessions.session_selected = pos;
             }
             Some((from_sessions, session))
         }
@@ -2651,15 +2643,15 @@ fn apply_session_index_update(mut model: AppModel, index: Arc<SessionIndex>) -> 
                 &mut view,
                 model.engine_filter,
             );
-            if let Some(log_path) = selected_log_path {
-                if let Some(pos) = view.filtered_indices.iter().position(|index| {
+            if let Some(log_path) = selected_log_path
+                && let Some(pos) = view.filtered_indices.iter().position(|index| {
                     project
                         .sessions
                         .get(*index)
                         .is_some_and(|session| session.log_path == log_path)
-                }) {
-                    view.session_selected = pos;
-                }
+                })
+            {
+                view.session_selected = pos;
             }
         } else {
             view.filtered_indices.clear();
@@ -3716,10 +3708,10 @@ fn prune_project_selection(projects: &[ProjectSummary], view: &mut ProjectsView)
 
     view.selected_project_paths
         .retain(|path| available.contains(path));
-    if let Some(anchor) = &view.selection_anchor {
-        if !available.contains(anchor) {
-            view.selection_anchor = None;
-        }
+    if let Some(anchor) = &view.selection_anchor
+        && !available.contains(anchor)
+    {
+        view.selection_anchor = None;
     }
 }
 
@@ -3819,10 +3811,10 @@ fn prune_sessions_selection(sessions: &[SessionSummary], view: &mut SessionsView
 
     view.selected_log_paths
         .retain(|path| available.contains(path));
-    if let Some(anchor) = &view.selection_anchor {
-        if !available.contains(anchor) {
-            view.selection_anchor = None;
-        }
+    if let Some(anchor) = &view.selection_anchor
+        && !available.contains(anchor)
+    {
+        view.selection_anchor = None;
     }
 }
 
@@ -3867,10 +3859,10 @@ fn prune_task_selection(view: &mut TasksView) {
 
     view.selected_task_ids
         .retain(|task_id| available.contains(task_id));
-    if let Some(anchor) = &view.selection_anchor {
-        if !available.contains(anchor) {
-            view.selection_anchor = None;
-        }
+    if let Some(anchor) = &view.selection_anchor
+        && !available.contains(anchor)
+    {
+        view.selection_anchor = None;
     }
 }
 
@@ -4310,15 +4302,15 @@ fn update_sessions(
                     &mut view,
                     model.engine_filter,
                 );
-                if let Some(log_path) = selected_log_path {
-                    if let Some(pos) = view.filtered_indices.iter().position(|index| {
+                if let Some(log_path) = selected_log_path
+                    && let Some(pos) = view.filtered_indices.iter().position(|index| {
                         project
                             .sessions
                             .get(*index)
                             .is_some_and(|session| session.log_path == log_path)
-                    }) {
-                        view.session_selected = pos;
-                    }
+                    })
+                {
+                    view.session_selected = pos;
                 }
             } else {
                 view.filtered_indices.clear();
@@ -4349,15 +4341,15 @@ fn update_sessions(
                     &mut view,
                     model.engine_filter,
                 );
-                if let Some(log_path) = selected_log_path {
-                    if let Some(pos) = view.filtered_indices.iter().position(|index| {
+                if let Some(log_path) = selected_log_path
+                    && let Some(pos) = view.filtered_indices.iter().position(|index| {
                         project
                             .sessions
                             .get(*index)
                             .is_some_and(|session| session.log_path == log_path)
-                    }) {
-                        view.session_selected = pos;
-                    }
+                    })
+                {
+                    view.session_selected = pos;
                 }
             } else {
                 view.filtered_indices.clear();
@@ -5178,23 +5170,19 @@ fn update_session_detail(
         },
         KeyCode::Enter => {
             let selected = view.selected.min(view.items.len().saturating_sub(1));
-            if let Some(item) = view.items.get(selected) {
-                if item.kind == TimelineItemKind::ToolCall {
-                    if let Some(call_id) = item.call_id.as_deref() {
-                        if let Some(output_index) =
-                            find_tool_output_index(&view.items, selected, call_id)
-                        {
-                            view.selected = output_index;
-                            view.details_scroll = 0;
-                        } else {
-                            model.notice =
-                                Some("No ToolOut found for the selected Tool call.".to_string());
-                        }
-
-                        model.view = View::SessionDetail(view);
-                        return (model, AppCommand::None);
-                    }
+            if let Some(item) = view.items.get(selected)
+                && item.kind == TimelineItemKind::ToolCall
+                && let Some(call_id) = item.call_id.as_deref()
+            {
+                if let Some(output_index) = find_tool_output_index(&view.items, selected, call_id) {
+                    view.selected = output_index;
+                    view.details_scroll = 0;
+                } else {
+                    model.notice = Some("No ToolOut found for the selected Tool call.".to_string());
                 }
+
+                model.view = View::SessionDetail(view);
+                return (model, AppCommand::None);
             }
         }
         KeyCode::Char('f') | KeyCode::Char('F') => {
@@ -5908,8 +5896,8 @@ fn find_tool_output_index(
     selected_index: usize,
     call_id: &str,
 ) -> Option<usize> {
-    if selected_index + 1 < items.len() {
-        if let Some((index, _)) =
+    if selected_index + 1 < items.len()
+        && let Some((index, _)) =
             items
                 .iter()
                 .enumerate()
@@ -5918,9 +5906,8 @@ fn find_tool_output_index(
                     item.kind == TimelineItemKind::ToolOutput
                         && item.call_id.as_deref() == Some(call_id)
                 })
-        {
-            return Some(index);
-        }
+    {
+        return Some(index);
     }
 
     items

@@ -137,10 +137,10 @@ fn parse_event_msg_value(
     let payload = value.get("payload").unwrap_or(&Value::Null);
     let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
-    if payload_type == "task_started" {
-        if let Some(turn_id) = payload.get("turn_id").and_then(|v| v.as_str()) {
-            return ParsedLogLine::TurnIdHint(turn_id.to_string());
-        }
+    if payload_type == "task_started"
+        && let Some(turn_id) = payload.get("turn_id").and_then(|v| v.as_str())
+    {
+        return ParsedLogLine::TurnIdHint(turn_id.to_string());
     }
 
     // Codex duplicates user prompts as both:
@@ -204,12 +204,11 @@ fn parse_response_item_value(
             let mut parts: Vec<String> = Vec::new();
             if let Some(summary) = payload.get("summary").and_then(|v| v.as_array()) {
                 for entry in summary {
-                    if entry.get("type").and_then(|v| v.as_str()) == Some("summary_text") {
-                        if let Some(text) = entry.get("text").and_then(|v| v.as_str()) {
-                            if !text.trim().is_empty() {
-                                parts.push(text.trim().to_string());
-                            }
-                        }
+                    if entry.get("type").and_then(|v| v.as_str()) == Some("summary_text")
+                        && let Some(text) = entry.get("text").and_then(|v| v.as_str())
+                        && !text.trim().is_empty()
+                    {
+                        parts.push(text.trim().to_string());
                     }
                 }
             }
@@ -259,12 +258,11 @@ fn parse_message_item(
 
     let mut texts: Vec<String> = Vec::new();
     for item in content {
-        if item.get("type").and_then(|v| v.as_str()) == Some("input_text")
-            || item.get("type").and_then(|v| v.as_str()) == Some("output_text")
+        if (item.get("type").and_then(|v| v.as_str()) == Some("input_text")
+            || item.get("type").and_then(|v| v.as_str()) == Some("output_text"))
+            && let Some(text) = item.get("text").and_then(|v| v.as_str())
         {
-            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                texts.push(text.to_string());
-            }
+            texts.push(text.to_string());
         }
     }
 
@@ -336,11 +334,11 @@ fn parse_function_call(
     let mut detail = arguments;
 
     if name == "skill" {
-        if let Ok(value) = serde_json::from_str::<Value>(&detail) {
-            if let Some(skill_name) = value.get("name").and_then(|v| v.as_str()) {
-                summary = "Skill()".to_string();
-                detail = serde_json::json!({ "skill": skill_name }).to_string();
-            }
+        if let Ok(value) = serde_json::from_str::<Value>(&detail)
+            && let Some(skill_name) = value.get("name").and_then(|v| v.as_str())
+        {
+            summary = "Skill()".to_string();
+            detail = serde_json::json!({ "skill": skill_name }).to_string();
         }
         if summary != "Skill()" {
             summary = "Skill()".to_string();

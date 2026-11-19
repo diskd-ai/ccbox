@@ -110,10 +110,10 @@ fn close_all_open_spans(spans: &mut [SkillSpan], stack: &mut Vec<usize>, idx: us
     }
     let end_idx = idx.saturating_sub(1);
     while let Some(span_idx) = stack.pop() {
-        if let Some(span) = spans.get_mut(span_idx) {
-            if span.end_idx.is_none() {
-                span.end_idx = Some(end_idx);
-            }
+        if let Some(span) = spans.get_mut(span_idx)
+            && span.end_idx.is_none()
+        {
+            span.end_idx = Some(end_idx);
         }
     }
 }
@@ -183,13 +183,13 @@ pub fn detect_skill_loops(spans: &[SkillSpan]) -> Vec<SkillLoop> {
                 current_indices.push(idx);
             }
             _ => {
-                if current_indices.len() >= 2 {
-                    if let Some(name) = current_name {
-                        out.push(SkillLoop {
-                            name: name.to_string(),
-                            span_indices: current_indices.clone(),
-                        });
-                    }
+                if current_indices.len() >= 2
+                    && let Some(name) = current_name
+                {
+                    out.push(SkillLoop {
+                        name: name.to_string(),
+                        span_indices: current_indices.clone(),
+                    });
                 }
                 current_name = Some(&span.name);
                 current_indices.clear();
@@ -198,13 +198,13 @@ pub fn detect_skill_loops(spans: &[SkillSpan]) -> Vec<SkillLoop> {
         }
     }
 
-    if current_indices.len() >= 2 {
-        if let Some(name) = current_name {
-            out.push(SkillLoop {
-                name: name.to_string(),
-                span_indices: current_indices,
-            });
-        }
+    if current_indices.len() >= 2
+        && let Some(name) = current_name
+    {
+        out.push(SkillLoop {
+            name: name.to_string(),
+            span_indices: current_indices,
+        });
     }
 
     out

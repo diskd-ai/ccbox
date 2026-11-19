@@ -232,8 +232,8 @@ fn find_tool_output_for_call<'a>(
     selected_index: usize,
     call_id: &str,
 ) -> Option<&'a TimelineItem> {
-    if selected_index + 1 < items.len() {
-        if let Some((_, item)) =
+    if selected_index + 1 < items.len()
+        && let Some((_, item)) =
             items
                 .iter()
                 .enumerate()
@@ -242,9 +242,8 @@ fn find_tool_output_for_call<'a>(
                     item.kind == TimelineItemKind::ToolOutput
                         && item.call_id.as_deref() == Some(call_id)
                 })
-        {
-            return Some(item);
-        }
+    {
+        return Some(item);
     }
 
     items.iter().find(|item| {

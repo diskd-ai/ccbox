@@ -512,10 +512,10 @@ impl CliUpdateNotice {
 
     fn write_hint(&mut self, err: &mut impl Write) -> io::Result<()> {
         let mut hint: Option<String> = None;
-        if let Some(rx) = self.rx.as_ref() {
-            if let Ok(message) = rx.try_recv() {
-                hint = message;
-            }
+        if let Some(rx) = self.rx.as_ref()
+            && let Ok(message) = rx.try_recv()
+        {
+            hint = message;
         }
 
         if hint.is_none() {
@@ -615,10 +615,10 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
                     return Ok(());
                 }
             }
-            if let Some(notice) = notice {
-                if !write_line(&mut err, &notice)? {
-                    return Ok(());
-                }
+            if let Some(notice) = notice
+                && !write_line(&mut err, &notice)?
+            {
+                return Ok(());
             }
             if warnings > 0 && !write_line(&mut err, &format!("warnings: {warnings}"))? {
                 return Ok(());
@@ -665,10 +665,10 @@ pub fn run(command: CliCommand, sessions_dir: &Path) -> Result<(), CliRunError> 
                     return Ok(());
                 }
             }
-            if let Some(notice) = notice {
-                if !write_line(&mut err, &notice)? {
-                    return Ok(());
-                }
+            if let Some(notice) = notice
+                && !write_line(&mut err, &notice)?
+            {
+                return Ok(());
             }
             if warnings > 0 && !write_line(&mut err, &format!("warnings: {warnings}"))? {
                 return Ok(());
@@ -859,20 +859,20 @@ fn print_skills_human(
 
     let session_ms = session_duration_ms(items);
     let total_skill_ms = total_top_level_skill_duration_ms(spans, metrics);
-    if let Some(session_ms) = session_ms {
-        if session_ms > 0 {
-            let pct = (total_skill_ms as f64 / session_ms as f64) * 100.0;
-            write_line(out, "")?;
-            write_line(
-                out,
-                &format!(
-                    "Skill time: {} / {} session ({:.1}%)",
-                    format_duration_ms(Some(total_skill_ms)),
-                    format_duration_ms(Some(session_ms)),
-                    pct
-                ),
-            )?;
-        }
+    if let Some(session_ms) = session_ms
+        && session_ms > 0
+    {
+        let pct = (total_skill_ms as f64 / session_ms as f64) * 100.0;
+        write_line(out, "")?;
+        write_line(
+            out,
+            &format!(
+                "Skill time: {} / {} session ({:.1}%)",
+                format_duration_ms(Some(total_skill_ms)),
+                format_duration_ms(Some(session_ms)),
+                pct
+            ),
+        )?;
     }
 
     Ok(())
@@ -957,12 +957,11 @@ fn extract_session_id_from_session_meta(path: &Path) -> Option<String> {
         if trimmed.is_empty() {
             continue;
         }
-        if trimmed.contains("\"type\":\"session_meta\"")
-            || trimmed.contains("\"type\": \"session_meta\"")
+        if (trimmed.contains("\"type\":\"session_meta\"")
+            || trimmed.contains("\"type\": \"session_meta\""))
+            && let Ok(meta) = crate::domain::parse_session_meta_line(trimmed)
         {
-            if let Ok(meta) = crate::domain::parse_session_meta_line(trimmed) {
-                return Some(meta.id);
-            }
+            return Some(meta.id);
         }
     }
     None
@@ -983,10 +982,10 @@ fn total_top_level_skill_duration_ms(
         if span.depth != 0 {
             continue;
         }
-        if let Some(ms) = metric.duration_ms {
-            if ms > 0 {
-                total = total.saturating_add(ms);
-            }
+        if let Some(ms) = metric.duration_ms
+            && ms > 0
+        {
+            total = total.saturating_add(ms);
         }
     }
     total
@@ -1149,10 +1148,9 @@ fn select_project(
             if let (Some(project_canon), Some(candidate_canon)) = (
                 canonical_projects.get(idx).and_then(|value| value.as_ref()),
                 canonical_candidate.as_ref(),
-            ) {
-                if project_canon == candidate_canon {
-                    return Ok(project.clone());
-                }
+            ) && project_canon == candidate_canon
+            {
+                return Ok(project.clone());
             }
         }
     }

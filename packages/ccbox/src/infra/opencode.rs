@@ -24,6 +24,24 @@ pub enum ResolveOpenCodeDbPathError {
     HomeDirNotFound,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ArchiveOpenCodeSessionsOutcome {
+    pub archived: usize,
+    pub missing: usize,
+}
+
+#[derive(Debug, Error)]
+pub enum ArchiveOpenCodeSessionsError {
+    #[error(transparent)]
+    ResolveOpenCodeDbPath(#[from] ResolveOpenCodeDbPathError),
+
+    #[error("OpenCode DB not found: {0}")]
+    DbMissing(String),
+
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+}
+
 pub fn resolve_opencode_db_path() -> Result<PathBuf, ResolveOpenCodeDbPathError> {
     if let Some(override_path) = std::env::var_os("CCBOX_OPENCODE_DB_PATH") {
         return Ok(PathBuf::from(override_path));
@@ -44,6 +62,23 @@ pub fn resolve_opencode_db_path() -> Result<PathBuf, ResolveOpenCodeDbPathError>
         .join("share")
         .join("opencode")
         .join("opencode.db"))
+}
+
+pub fn archive_opencode_sessions(
+    session_ids: &[String],
+) -> Result<ArchiveOpenCodeSessionsOutcome, ArchiveOpenCodeSessionsError> {
+    if session_ids.is_empty() {
+        return Ok(ArchiveOpenCodeSessionsOutcome::default());
+    }
+
+    let db_path = resolve_opencode_db_path()?;
+    if !db_path.exists() {
+        return Err(ArchiveOpenCodeSessionsError::DbMissing(
+            db_path.display().to_string(),
+        ));
+    }
+
+    archive_opencode_sessions_with_db_path(&db_path, session_ids)
 }
 
 pub fn scan_opencode_db(db_path: &Path) -> OpenCodeScanOutput {
@@ -186,6 +221,58 @@ fn open_db_readonly(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+fn open_db_readwrite(path: &Path) -> rusqlite::Result<Connection> {
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let _ = conn.busy_timeout(Duration::from_millis(250));
+    Ok(conn)
+}
+
+fn archive_opencode_sessions_with_db_path(
+    db_path: &Path,
+    session_ids: &[String],
+) -> Result<ArchiveOpenCodeSessionsOutcome, ArchiveOpenCodeSessionsError> {
+    let mut conn = open_db_readwrite(db_path)?;
+    let now_ms = now_unix_ms();
+
+    let unique_ids = session_ids
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+    if unique_ids.is_empty() {
+        return Ok(ArchiveOpenCodeSessionsOutcome::default());
+    }
+
+    let tx = conn.transaction()?;
+    let mut stmt = tx.prepare(
+        r#"
+        UPDATE session
+        SET time_archived = ?2,
+            time_updated = CASE WHEN time_updated < ?2 THEN ?2 ELSE time_updated END
+        WHERE id = ?1
+          AND time_archived IS NULL
+    "#,
+    )?;
+
+    let mut archived = 0usize;
+    let mut missing = 0usize;
+    for session_id in unique_ids {
+        let changed = stmt.execute(rusqlite::params![session_id, now_ms])?;
+        if changed == 0 {
+            missing += 1;
+        } else {
+            archived += changed;
+        }
+    }
+    drop(stmt);
+    tx.commit()?;
+
+    Ok(ArchiveOpenCodeSessionsOutcome { archived, missing })
+}
+
 pub fn opencode_session_cache_path(state_dir: &Path, session_id: &str) -> PathBuf {
     state_dir
         .join("opencode")
@@ -197,6 +284,15 @@ fn unix_ms_to_rfc3339(ms: i64) -> Option<String> {
     let nanos: i128 = i128::from(ms).saturating_mul(1_000_000);
     let timestamp = OffsetDateTime::from_unix_timestamp_nanos(nanos).ok()?;
     timestamp.format(&Rfc3339).ok()
+}
+
+fn now_unix_ms() -> i64 {
+    let millis = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    i64::try_from(millis).unwrap_or(i64::MAX)
 }
 
 fn now_rfc3339() -> String {
@@ -498,18 +594,17 @@ fn build_codex_jsonl_values(
             user_messages.push(message);
             continue;
         }
-        if role == "assistant" {
-            if let Some(parent_id) = message
+        if role == "assistant"
+            && let Some(parent_id) = message
                 .data
                 .get("parentID")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
-            {
-                assistants_by_parent
-                    .entry(parent_id)
-                    .or_default()
-                    .push(message);
-            }
+        {
+            assistants_by_parent
+                .entry(parent_id)
+                .or_default()
+                .push(message);
         }
     }
 
@@ -1003,5 +1098,55 @@ mod tests {
         assert!(kinds.contains(&crate::domain::TimelineItemKind::ToolOutput));
         assert!(kinds.contains(&crate::domain::TimelineItemKind::Assistant));
         assert!(kinds.contains(&crate::domain::TimelineItemKind::TokenCount));
+    }
+
+    #[test]
+    fn archives_open_code_sessions_and_hides_them_from_scan() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("opencode.db");
+        let conn = create_minimal_db(&db_path);
+
+        conn.execute(
+            "INSERT INTO project (id, worktree, name, time_created, time_updated, sandboxes) VALUES (?1, ?2, NULL, 1, 1, '[]')",
+            params!["p1", "/tmp/worktree"],
+        )
+        .expect("project");
+
+        conn.execute(
+            "INSERT INTO session (id, project_id, parent_id, slug, directory, title, version, time_created, time_updated, time_archived) VALUES (?1, ?2, NULL, 's', '/tmp/worktree', 'active', 'v', 10, 20, NULL)",
+            params!["s-active", "p1"],
+        )
+        .expect("active session");
+
+        let state_dir = dir.path().join("state");
+        fs::create_dir_all(&state_dir).expect("state");
+
+        let before = scan_opencode_db_with_state_dir(&db_path, &state_dir);
+        assert_eq!(before.sessions.len(), 1);
+        assert_eq!(before.sessions[0].meta.id, "s-active");
+
+        let outcome = archive_opencode_sessions_with_db_path(
+            &db_path,
+            &[
+                "s-active".to_string(),
+                "s-active".to_string(),
+                "missing".to_string(),
+            ],
+        )
+        .expect("archive");
+        assert_eq!(outcome.archived, 1);
+        assert_eq!(outcome.missing, 1);
+
+        let archived: i64 = conn
+            .query_row(
+                "SELECT time_archived FROM session WHERE id = ?1",
+                params!["s-active"],
+                |row| row.get(0),
+            )
+            .expect("archived time");
+        assert!(archived > 0);
+
+        let after = scan_opencode_db_with_state_dir(&db_path, &state_dir);
+        assert_eq!(after.sessions.len(), 0);
     }
 }

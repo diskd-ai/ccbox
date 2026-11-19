@@ -221,20 +221,20 @@ fn parse_gemini_message(
         });
     }
 
-    if let Some(tokens) = value.get("tokens") {
-        if !tokens.is_null() {
-            let (summary, detail) = format_tokens_item(tokens);
-            items.push(TimelineItem {
-                kind: TimelineItemKind::TokenCount,
-                turn_id: None,
-                call_id: None,
-                source_line_no: None,
-                timestamp: timestamp.clone(),
-                timestamp_ms,
-                summary,
-                detail,
-            });
-        }
+    if let Some(tokens) = value.get("tokens")
+        && !tokens.is_null()
+    {
+        let (summary, detail) = format_tokens_item(tokens);
+        items.push(TimelineItem {
+            kind: TimelineItemKind::TokenCount,
+            turn_id: None,
+            call_id: None,
+            source_line_no: None,
+            timestamp: timestamp.clone(),
+            timestamp_ms,
+            summary,
+            detail,
+        });
     }
 
     if let Some(tool_calls) = value.get("toolCalls").and_then(|v| v.as_array()) {
@@ -291,23 +291,22 @@ fn parse_tool_call(
         warnings = warnings.saturating_add(1);
     }
 
-    if let Some(result) = value.get("result") {
-        if !result.is_null() {
-            let detail =
-                serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string());
-            let summary =
-                derive_title_from_user_text(&detail).unwrap_or_else(|| "(tool output)".to_string());
-            items.push(TimelineItem {
-                kind: TimelineItemKind::ToolOutput,
-                turn_id: None,
-                call_id,
-                source_line_no: None,
-                timestamp,
-                timestamp_ms,
-                summary,
-                detail,
-            });
-        }
+    if let Some(result) = value.get("result")
+        && !result.is_null()
+    {
+        let detail = serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string());
+        let summary =
+            derive_title_from_user_text(&detail).unwrap_or_else(|| "(tool output)".to_string());
+        items.push(TimelineItem {
+            kind: TimelineItemKind::ToolOutput,
+            turn_id: None,
+            call_id,
+            source_line_no: None,
+            timestamp,
+            timestamp_ms,
+            summary,
+            detail,
+        });
     }
 
     GeminiTimelineParseOutput { items, warnings }

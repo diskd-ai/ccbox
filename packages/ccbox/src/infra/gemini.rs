@@ -182,10 +182,10 @@ fn build_log_hints(entries: &[GeminiUserLogEntry]) -> GeminiLogHints {
         if !first_message_by_session.contains_key(&entry.session_id) {
             first_message_by_session.insert(entry.session_id.clone(), entry.message.clone());
         }
-        if let Some(ts) = entry.timestamp.as_ref() {
-            if !first_timestamp_by_session.contains_key(&entry.session_id) {
-                first_timestamp_by_session.insert(entry.session_id.clone(), ts.clone());
-            }
+        if let Some(ts) = entry.timestamp.as_ref()
+            && !first_timestamp_by_session.contains_key(&entry.session_id)
+        {
+            first_timestamp_by_session.insert(entry.session_id.clone(), ts.clone());
         }
 
         let prefix = entry.session_id.chars().take(8).collect::<String>();
@@ -243,35 +243,34 @@ fn scan_gemini_session_file(
         || started_at.is_none()
         || session_id.len() == 8
         || !hints.first_message_by_session.contains_key(&session_id);
-    if needs_parse {
-        if let Ok(text) = fs::read_to_string(path) {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                if let Some(parsed_id) = extract_gemini_session_id(&value) {
-                    session_id = parsed_id;
-                }
+    if needs_parse
+        && let Ok(text) = fs::read_to_string(path)
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&text)
+    {
+        if let Some(parsed_id) = extract_gemini_session_id(&value) {
+            session_id = parsed_id;
+        }
 
-                if started_at.is_none() {
-                    started_at = hints
-                        .first_timestamp_by_session
-                        .get(&session_id)
-                        .cloned()
-                        .or_else(|| extract_gemini_session_start_time(&value));
-                }
+        if started_at.is_none() {
+            started_at = hints
+                .first_timestamp_by_session
+                .get(&session_id)
+                .cloned()
+                .or_else(|| extract_gemini_session_start_time(&value));
+        }
 
-                if title.is_none() {
-                    title = hints
-                        .first_message_by_session
-                        .get(&session_id)
-                        .cloned()
-                        .and_then(|text| (!is_metadata_prompt(&text)).then_some(text))
+        if title.is_none() {
+            title = hints
+                .first_message_by_session
+                .get(&session_id)
+                .cloned()
+                .and_then(|text| (!is_metadata_prompt(&text)).then_some(text))
+                .and_then(|text| derive_title_from_user_text(&text))
+                .or_else(|| infer_gemini_title_from_session(&value))
+                .or_else(|| {
+                    extract_gemini_first_user_message(&value)
                         .and_then(|text| derive_title_from_user_text(&text))
-                        .or_else(|| infer_gemini_title_from_session(&value))
-                        .or_else(|| {
-                            extract_gemini_first_user_message(&value)
-                                .and_then(|text| derive_title_from_user_text(&text))
-                        });
-                }
-            }
+                });
         }
     }
 

@@ -59,20 +59,20 @@ fn apply_scroll(mut model: AppModel, col: u16, row: u16, direction: ScrollDirect
         return model;
     }
 
-    if let View::SessionDetail(mut view) = model.view.clone() {
-        if view.output_overlay_open {
-            let step = usize_to_u16(SCROLL_STEP);
-            match direction {
-                ScrollDirection::Up => {
-                    view.output_overlay_scroll = view.output_overlay_scroll.saturating_sub(step);
-                }
-                ScrollDirection::Down => {
-                    view.output_overlay_scroll = view.output_overlay_scroll.saturating_add(step);
-                }
+    if let View::SessionDetail(mut view) = model.view.clone()
+        && view.output_overlay_open
+    {
+        let step = usize_to_u16(SCROLL_STEP);
+        match direction {
+            ScrollDirection::Up => {
+                view.output_overlay_scroll = view.output_overlay_scroll.saturating_sub(step);
             }
-            model.view = View::SessionDetail(view);
-            return model;
+            ScrollDirection::Down => {
+                view.output_overlay_scroll = view.output_overlay_scroll.saturating_add(step);
+            }
         }
+        model.view = View::SessionDetail(view);
+        return model;
     }
 
     if let Some(mut preview) = model.session_result_preview.take() {

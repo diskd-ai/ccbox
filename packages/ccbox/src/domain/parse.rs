@@ -80,10 +80,10 @@ pub fn parse_user_message_text(line: &str) -> Result<Option<String>, ParseError>
     };
 
     for item in content {
-        if item.content_type == "input_text" {
-            if let Some(text) = item.text {
-                return Ok(Some(text));
-            }
+        if item.content_type == "input_text"
+            && let Some(text) = item.text
+        {
+            return Ok(Some(text));
         }
     }
 

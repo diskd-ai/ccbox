@@ -127,11 +127,9 @@ pub fn refresh_session_index(sessions: &[SessionSummary], prior: &SessionIndex) 
         let reuse = prior.entries.get(&log_path).is_some_and(|entry| {
             entry.size_bytes == size_bytes && entry.modified_unix_ms == modified_unix_ms
         });
-        if reuse {
-            if let Some(entry) = prior.entries.get(&log_path).cloned() {
-                next_entries.insert(log_path, entry);
-                continue;
-            }
+        if reuse && let Some(entry) = prior.entries.get(&log_path).cloned() {
+            next_entries.insert(log_path, entry);
+            continue;
         }
 
         let (total_tokens, last_tokens) = if session.engine == SessionEngine::Codex {
@@ -169,16 +167,16 @@ fn extract_last_token_usage(path: &Path) -> (Option<u64>, Option<u64>) {
     const SMALL_TAIL_BYTES: usize = 256 * 1024;
     const LARGE_TAIL_BYTES: usize = 2 * 1024 * 1024;
 
-    if let Ok((tail, _size)) = super::read_tail(path, SMALL_TAIL_BYTES) {
-        if let Some((total, last)) = find_last_token_usage_in_text(&tail) {
-            return (Some(total), last);
-        }
+    if let Ok((tail, _size)) = super::read_tail(path, SMALL_TAIL_BYTES)
+        && let Some((total, last)) = find_last_token_usage_in_text(&tail)
+    {
+        return (Some(total), last);
     }
 
-    if let Ok((tail, _size)) = super::read_tail(path, LARGE_TAIL_BYTES) {
-        if let Some((total, last)) = find_last_token_usage_in_text(&tail) {
-            return (Some(total), last);
-        }
+    if let Ok((tail, _size)) = super::read_tail(path, LARGE_TAIL_BYTES)
+        && let Some((total, last)) = find_last_token_usage_in_text(&tail)
+    {
+        return (Some(total), last);
     }
 
     (None, None)

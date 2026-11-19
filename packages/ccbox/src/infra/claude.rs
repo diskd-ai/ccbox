@@ -546,12 +546,11 @@ fn scan_claude_session_file(path: &Path) -> Result<SessionSummary, ()> {
             timestamp = hint.timestamp;
         }
 
-        if title.is_none() {
-            if let Some(text) = parse_claude_user_message_text(&value) {
-                if let Some(candidate) = derive_claude_session_title(&text) {
-                    title = Some(candidate);
-                }
-            }
+        if title.is_none()
+            && let Some(text) = parse_claude_user_message_text(&value)
+            && let Some(candidate) = derive_claude_session_title(&text)
+        {
+            title = Some(candidate);
         }
 
         if cwd.is_some() && session_id.is_some() && timestamp.is_some() && title.is_some() {

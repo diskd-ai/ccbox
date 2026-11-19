@@ -917,21 +917,21 @@ fn render_tasks(
     let footer_text = "Keys: type=filter  arrows=move  PgUp/PgDn=page  Enter=open  Tab=select  Ctrl+Enter/Cmd+Enter=spawn  n=new  Del=delete  Backspace=edit  Esc=clear/back  Ctrl+4/Cmd+4=tasks  Ctrl+T/Cmd+T=new  F3=stats";
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(footer_text.to_string()));
-    if let Some(notice) = model.notice.as_deref() {
-        if !notice.trim().is_empty() {
-            spans.push(Span::raw(format!("  ·  {notice}")));
-        }
+    if let Some(notice) = model.notice.as_deref()
+        && !notice.trim().is_empty()
+    {
+        spans.push(Span::raw(format!("  ·  {notice}")));
     }
-    if let Some(hint) = model.update_hint.as_deref() {
-        if !hint.trim().is_empty() {
-            spans.push(Span::raw("  ·  "));
-            spans.push(Span::styled(
-                hint.to_string(),
-                Style::default()
-                    .fg(theme::SUCCESS)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
+    if let Some(hint) = model.update_hint.as_deref()
+        && !hint.trim().is_empty()
+    {
+        spans.push(Span::raw("  ·  "));
+        spans.push(Span::styled(
+            hint.to_string(),
+            Style::default()
+                .fg(theme::SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
     spans.push(Span::raw("  ·  "));
     spans.push(Span::styled(
@@ -1098,21 +1098,21 @@ fn render_new_session(
     };
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(footer_text.to_string()));
-    if let Some(notice) = model.notice.as_deref() {
-        if !notice.trim().is_empty() {
-            spans.push(Span::raw(format!("  ·  {notice}")));
-        }
+    if let Some(notice) = model.notice.as_deref()
+        && !notice.trim().is_empty()
+    {
+        spans.push(Span::raw(format!("  ·  {notice}")));
     }
-    if let Some(hint) = model.update_hint.as_deref() {
-        if !hint.trim().is_empty() {
-            spans.push(Span::raw("  ·  "));
-            spans.push(Span::styled(
-                hint.to_string(),
-                Style::default()
-                    .fg(theme::SUCCESS)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
+    if let Some(hint) = model.update_hint.as_deref()
+        && !hint.trim().is_empty()
+    {
+        spans.push(Span::raw("  ·  "));
+        spans.push(Span::styled(
+            hint.to_string(),
+            Style::default()
+                .fg(theme::SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
     spans.push(Span::raw("  ·  "));
     spans.push(Span::styled(
@@ -1268,21 +1268,21 @@ fn render_task_create(
     let footer_text = "Keys: edit text  Ctrl+S/Cmd+S=save  Ctrl+I/Cmd+I=insert image  Ctrl+V=paste image  Ctrl+P/Cmd+P=project path  Esc=cancel  Ctrl+Q/Ctrl+C=quit  F1/?=help";
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(footer_text.to_string()));
-    if let Some(notice) = model.notice.as_deref() {
-        if !notice.trim().is_empty() {
-            spans.push(Span::raw(format!("  ·  {notice}")));
-        }
+    if let Some(notice) = model.notice.as_deref()
+        && !notice.trim().is_empty()
+    {
+        spans.push(Span::raw(format!("  ·  {notice}")));
     }
-    if let Some(hint) = model.update_hint.as_deref() {
-        if !hint.trim().is_empty() {
-            spans.push(Span::raw("  ·  "));
-            spans.push(Span::styled(
-                hint.to_string(),
-                Style::default()
-                    .fg(theme::SUCCESS)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
+    if let Some(hint) = model.update_hint.as_deref()
+        && !hint.trim().is_empty()
+    {
+        spans.push(Span::raw("  ·  "));
+        spans.push(Span::styled(
+            hint.to_string(),
+            Style::default()
+                .fg(theme::SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
     spans.push(Span::raw("  ·  "));
     spans.push(Span::styled(
@@ -1468,21 +1468,21 @@ fn render_task_detail(
     let footer_text = "Keys: arrows=scroll  PgUp/PgDn=page  Ctrl+Enter/Cmd+Enter=spawn  Shift+Tab=engine  Del=delete  Esc/Backspace=back  Ctrl+Q/Ctrl+C=quit  F1/?=help  F3=stats";
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(footer_text.to_string()));
-    if let Some(notice) = model.notice.as_deref() {
-        if !notice.trim().is_empty() {
-            spans.push(Span::raw(format!("  ·  {notice}")));
-        }
+    if let Some(notice) = model.notice.as_deref()
+        && !notice.trim().is_empty()
+    {
+        spans.push(Span::raw(format!("  ·  {notice}")));
     }
-    if let Some(hint) = model.update_hint.as_deref() {
-        if !hint.trim().is_empty() {
-            spans.push(Span::raw("  ·  "));
-            spans.push(Span::styled(
-                hint.to_string(),
-                Style::default()
-                    .fg(theme::SUCCESS)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
+    if let Some(hint) = model.update_hint.as_deref()
+        && !hint.trim().is_empty()
+    {
+        spans.push(Span::raw("  ·  "));
+        spans.push(Span::styled(
+            hint.to_string(),
+            Style::default()
+                .fg(theme::SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
     spans.push(Span::raw("  ·  "));
     spans.push(Span::styled(
@@ -1719,11 +1719,11 @@ fn footer_paragraph(
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(base));
 
-    if let Some(message) = notice {
-        if !message.trim().is_empty() {
-            spans.push(Span::raw("  ·  "));
-            spans.push(Span::raw(message.to_string()));
-        }
+    if let Some(message) = notice
+        && !message.trim().is_empty()
+    {
+        spans.push(Span::raw("  ·  "));
+        spans.push(Span::raw(message.to_string()));
     }
 
     if let Some(hint) = update_hint {
@@ -3214,33 +3214,31 @@ fn build_item_detail_text(detail_view: &crate::app::SessionDetailView) -> Text<'
 
     let max = 12_000;
 
-    if item.kind == TimelineItemKind::ToolCall {
-        if let Some(call_id) = item.call_id.as_deref() {
-            if let Some(tool_out) = find_tool_output_for_call(&detail_view.items, selected, call_id)
-            {
-                text.lines.push(Line::from(Span::styled(
-                    "Output:",
-                    Style::default()
-                        .fg(theme::ACCENT)
-                        .add_modifier(Modifier::BOLD),
-                )));
-                text.lines.extend(render_plain_highlight_lines(
-                    truncate_chars(&tool_out.detail, max).as_str(),
-                ));
-                text.lines.push(Line::from(""));
-                text.lines.push(Line::from(Span::styled(
-                    "Input:",
-                    Style::default()
-                        .fg(theme::ACCENT)
-                        .add_modifier(Modifier::BOLD),
-                )));
-                text.lines.extend(render_plain_highlight_lines(
-                    truncate_chars(&item.detail, max).as_str(),
-                ));
-                add_detail_bottom_padding(&mut text);
-                return text;
-            }
-        }
+    if item.kind == TimelineItemKind::ToolCall
+        && let Some(call_id) = item.call_id.as_deref()
+        && let Some(tool_out) = find_tool_output_for_call(&detail_view.items, selected, call_id)
+    {
+        text.lines.push(Line::from(Span::styled(
+            "Output:",
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )));
+        text.lines.extend(render_plain_highlight_lines(
+            truncate_chars(&tool_out.detail, max).as_str(),
+        ));
+        text.lines.push(Line::from(""));
+        text.lines.push(Line::from(Span::styled(
+            "Input:",
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )));
+        text.lines.extend(render_plain_highlight_lines(
+            truncate_chars(&item.detail, max).as_str(),
+        ));
+        add_detail_bottom_padding(&mut text);
+        return text;
     }
 
     let truncated = truncate_chars(&item.detail, max);
@@ -3438,11 +3436,11 @@ fn push_json_segment(segments: &mut Vec<JsonSegment>, kind: JsonStyleKind, text:
         return;
     }
 
-    if let Some(last) = segments.last_mut() {
-        if last.kind == kind {
-            last.text.push_str(text);
-            return;
-        }
+    if let Some(last) = segments.last_mut()
+        && last.kind == kind
+    {
+        last.text.push_str(text);
+        return;
     }
 
     segments.push(JsonSegment {
@@ -3573,10 +3571,10 @@ fn render_json_highlight_lines(text: &str) -> Vec<Line<'static>> {
             }
             ':' => {
                 push_json_segment(&mut current_segments, JsonStyleKind::Punctuation, ":");
-                if let Some(JsonContext::Object(state)) = stack.last_mut() {
-                    if *state == ObjectState::Colon {
-                        *state = ObjectState::Value;
-                    }
+                if let Some(JsonContext::Object(state)) = stack.last_mut()
+                    && *state == ObjectState::Colon
+                {
+                    *state = ObjectState::Value;
                 }
             }
             ',' => {
@@ -3744,12 +3742,11 @@ fn markdownish_inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>>
             break;
         };
 
-        if pos > 0 {
-            if let Some(prefix) = remaining.get(0..pos) {
-                if !prefix.is_empty() {
-                    spans.push(Span::styled(prefix.to_string(), base_style));
-                }
-            }
+        if pos > 0
+            && let Some(prefix) = remaining.get(0..pos)
+            && !prefix.is_empty()
+        {
+            spans.push(Span::styled(prefix.to_string(), base_style));
         }
 
         match token {
@@ -3799,11 +3796,11 @@ fn markdownish_inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>>
                         .fg(theme::ACCENT)
                         .add_modifier(Modifier::UNDERLINED),
                 ));
-                if let Some(rest_after_paren) = rest_after.strip_prefix('(') {
-                    if let Some(close_paren) = rest_after_paren.find(')') {
-                        remaining = rest_after_paren.get(close_paren + 1..).unwrap_or("");
-                        continue;
-                    }
+                if let Some(rest_after_paren) = rest_after.strip_prefix('(')
+                    && let Some(close_paren) = rest_after_paren.find(')')
+                {
+                    remaining = rest_after_paren.get(close_paren + 1..).unwrap_or("");
+                    continue;
                 }
                 remaining = rest_after;
             }
@@ -3818,12 +3815,12 @@ fn find_tool_output_for_call<'a>(
     selected_index: usize,
     call_id: &str,
 ) -> Option<&'a TimelineItem> {
-    if selected_index + 1 < items.len() {
-        if let Some(hit) = items.iter().skip(selected_index + 1).find(|item| {
+    if selected_index + 1 < items.len()
+        && let Some(hit) = items.iter().skip(selected_index + 1).find(|item| {
             item.kind == TimelineItemKind::ToolOutput && item.call_id.as_deref() == Some(call_id)
-        }) {
-            return Some(hit);
-        }
+        })
+    {
+        return Some(hit);
     }
 
     items.iter().find(|item| {
@@ -3983,21 +3980,21 @@ fn render_skill_summary_overlay(
         let session_duration_ms = session_duration_ms(&detail_view.items);
         let total_skill_ms = total_top_level_skill_duration_ms(spans, &metrics);
 
-        if let Some(session_ms) = session_duration_ms {
-            if session_ms > 0 {
-                let pct = (total_skill_ms as f64 / session_ms as f64) * 100.0;
-                lines.push(Line::from(""));
-                lines.push(Line::from(format!(
-                    "Skill time: {} / {} session ({:.1}%)",
-                    format_duration(Duration::from_millis(
-                        u64::try_from(total_skill_ms.max(0)).unwrap_or(0)
-                    )),
-                    format_duration(Duration::from_millis(
-                        u64::try_from(session_ms.max(0)).unwrap_or(0)
-                    )),
-                    pct
-                )));
-            }
+        if let Some(session_ms) = session_duration_ms
+            && session_ms > 0
+        {
+            let pct = (total_skill_ms as f64 / session_ms as f64) * 100.0;
+            lines.push(Line::from(""));
+            lines.push(Line::from(format!(
+                "Skill time: {} / {} session ({:.1}%)",
+                format_duration(Duration::from_millis(
+                    u64::try_from(total_skill_ms.max(0)).unwrap_or(0)
+                )),
+                format_duration(Duration::from_millis(
+                    u64::try_from(session_ms.max(0)).unwrap_or(0)
+                )),
+                pct
+            )));
         }
     }
 
@@ -4059,10 +4056,10 @@ fn total_top_level_skill_duration_ms(
         if span.depth != 0 {
             continue;
         }
-        if let Some(ms) = metric.duration_ms {
-            if ms > 0 {
-                total = total.saturating_add(ms);
-            }
+        if let Some(ms) = metric.duration_ms
+            && ms > 0
+        {
+            total = total.saturating_add(ms);
         }
     }
     total
@@ -5016,12 +5013,12 @@ fn render_delete_confirm_overlay(
     message.push(Line::from(format!("Project path: {project_path}")));
     message.push(Line::from(""));
     message.push(Line::from(vec![Span::styled(
-        "This deletes log files under the Codex sessions directory only.",
+        "Deletes local logs; OpenCode sessions are archived in OpenCode DB.",
         Style::default()
             .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     )]));
-    message.push(Line::from(format!("Sessions dir: {sessions_dir}")));
+    message.push(Line::from(format!("Codex sessions dir: {sessions_dir}")));
     message.push(Line::from("Your project folder is not modified."));
 
     let paragraph = Paragraph::new(message).wrap(Wrap { trim: false });
@@ -5139,12 +5136,12 @@ fn render_delete_projects_confirm_overlay(
 
     message.push(Line::from(""));
     message.push(Line::from(vec![Span::styled(
-        "This deletes log files under the Codex sessions directory only.",
+        "Deletes local logs; OpenCode sessions are archived in OpenCode DB.",
         Style::default()
             .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     )]));
-    message.push(Line::from(format!("Sessions dir: {sessions_dir}")));
+    message.push(Line::from(format!("Codex sessions dir: {sessions_dir}")));
     message.push(Line::from("Your project folder is not modified."));
 
     let paragraph = Paragraph::new(message).wrap(Wrap { trim: false });
@@ -5253,12 +5250,12 @@ fn render_delete_session_confirm_overlay(
     message.push(Line::from(format!("Project path: {project_path}")));
     message.push(Line::from(""));
     message.push(Line::from(vec![Span::styled(
-        "This deletes 1 log file under the Codex sessions directory only.",
+        "Deletes local logs; OpenCode sessions are archived in OpenCode DB.",
         Style::default()
             .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     )]));
-    message.push(Line::from(format!("Sessions dir: {sessions_dir}")));
+    message.push(Line::from(format!("Codex sessions dir: {sessions_dir}")));
     message.push(Line::from("Your project folder is not modified."));
 
     let paragraph = Paragraph::new(message).wrap(Wrap { trim: false });
@@ -5380,14 +5377,14 @@ fn render_delete_sessions_confirm_overlay(
     message.push(Line::from(""));
     message.push(Line::from(vec![Span::styled(
         format!(
-            "This deletes {} log file(s) under the Codex sessions directory only.",
+            "Deletes local logs for {} session(s); OpenCode sessions are archived in OpenCode DB.",
             confirm.session_count
         ),
         Style::default()
             .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     )]));
-    message.push(Line::from(format!("Sessions dir: {sessions_dir}")));
+    message.push(Line::from(format!("Codex sessions dir: {sessions_dir}")));
     message.push(Line::from("Your project folder is not modified."));
 
     let paragraph = Paragraph::new(message).wrap(Wrap { trim: false });
