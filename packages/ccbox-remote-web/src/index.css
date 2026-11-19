@@ -1,0 +1,261 @@
+@import url('https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ─── Light — clean, muted, professional ──────────────── */
+  :root {
+    --background: 220 16% 96%;
+    --foreground: 220 20% 14%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 14%;
+
+    --primary: 220 72% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 92%;
+    --secondary-foreground: 220 20% 30%;
+
+    --muted: 220 14% 93%;
+    --muted-foreground: 220 10% 48%;
+
+    --accent: 220 14% 92%;
+    --accent-foreground: 220 20% 30%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 88%;
+    --input: 220 13% 88%;
+    --ring: 220 72% 50%;
+
+    --radius: 0.75rem;
+
+    /* Sidebar */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 20% 14%;
+    --sidebar-primary: 220 72% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 94%;
+    --sidebar-accent-foreground: 220 20% 30%;
+    --sidebar-border: 220 13% 90%;
+    --sidebar-ring: 220 72% 50%;
+
+    /* Semantic surfaces */
+    --bg-base: 220 16% 96%;
+    --bg-surface: 0 0% 100%;
+    --bg-elevated: 0 0% 100%;
+    --bg-hover: 220 14% 94%;
+    --bg-active: 220 60% 96%;
+
+    --text-primary: 220 20% 14%;
+    --text-secondary: 220 10% 46%;
+    --text-muted: 220 10% 64%;
+    --text-inverse: 0 0% 100%;
+
+    /* Engine colors */
+    --engine-codex: 220 72% 50%;
+    --engine-claude: 25 90% 48%;
+    --engine-gemini: 160 60% 38%;
+    --engine-opencode: 262 60% 52%;
+
+    /* Status colors */
+    --status-online: 152 56% 42%;
+    --status-running: 220 72% 50%;
+    --status-exited: 220 10% 58%;
+    --status-error: 0 72% 51%;
+    --status-warning: 38 80% 48%;
+
+    /* Timeline kind colors */
+    --kind-turn: 220 60% 52%;
+    --kind-user: 220 72% 50%;
+    --kind-assistant: 220 20% 14%;
+    --kind-thinking: 262 50% 50%;
+    --kind-tool-call: 38 75% 46%;
+    --kind-tool-output: 160 50% 38%;
+    --kind-token: 220 10% 58%;
+    --kind-note: 220 10% 46%;
+
+    /* Fonts */
+    --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", ui-monospace, monospace;
+    --font-sans: "Exo 2", system-ui, -apple-system, sans-serif;
+
+    /* Type scale */
+    --text-xs: 0.8125rem;
+    --text-sm: 0.875rem;
+    --text-base: 0.9375rem;
+    --text-md: 1rem;
+    --text-lg: 1.125rem;
+    --text-xl: 1.375rem;
+    --text-2xl: 1.625rem;
+
+    /* Shadows */
+    --shadow-card: 0 1px 3px 0 hsl(220 20% 14% / 0.04), 0 1px 2px -1px hsl(220 20% 14% / 0.03);
+    --shadow-elevated: 0 4px 12px -2px hsl(220 20% 14% / 0.08), 0 2px 4px -2px hsl(220 20% 14% / 0.04);
+    --shadow-dropdown: 0 8px 24px -4px hsl(220 20% 14% / 0.12), 0 2px 8px -2px hsl(220 20% 14% / 0.06);
+  }
+
+  /* ─── Dark — deep slate, professional ─────────────────── */
+  .dark {
+    --background: 224 20% 8%;
+    --foreground: 220 14% 92%;
+
+    --card: 224 18% 12%;
+    --card-foreground: 220 14% 92%;
+
+    --popover: 224 18% 12%;
+    --popover-foreground: 220 14% 92%;
+
+    --primary: 220 72% 56%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 224 14% 18%;
+    --secondary-foreground: 220 14% 85%;
+
+    --muted: 224 14% 18%;
+    --muted-foreground: 220 10% 52%;
+
+    --accent: 224 14% 18%;
+    --accent-foreground: 220 14% 85%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 224 14% 20%;
+    --input: 224 14% 20%;
+    --ring: 220 72% 56%;
+
+    /* Sidebar */
+    --sidebar-background: 224 18% 10%;
+    --sidebar-foreground: 220 14% 92%;
+    --sidebar-primary: 220 72% 56%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 224 14% 18%;
+    --sidebar-accent-foreground: 220 14% 85%;
+    --sidebar-border: 224 14% 18%;
+    --sidebar-ring: 220 72% 56%;
+
+    /* Semantic surfaces */
+    --bg-base: 224 20% 8%;
+    --bg-surface: 224 18% 12%;
+    --bg-elevated: 224 16% 16%;
+    --bg-hover: 224 14% 18%;
+    --bg-active: 224 20% 22%;
+
+    --text-primary: 220 14% 92%;
+    --text-secondary: 220 10% 56%;
+    --text-muted: 220 10% 40%;
+    --text-inverse: 220 20% 14%;
+
+    /* Engine colors */
+    --engine-codex: 220 72% 60%;
+    --engine-claude: 25 90% 58%;
+    --engine-gemini: 160 56% 50%;
+    --engine-opencode: 262 60% 62%;
+
+    /* Status colors */
+    --status-online: 152 56% 50%;
+    --status-running: 220 72% 60%;
+    --status-exited: 220 10% 52%;
+    --status-error: 0 72% 58%;
+    --status-warning: 38 80% 52%;
+
+    /* Timeline kind colors */
+    --kind-turn: 220 60% 62%;
+    --kind-user: 220 72% 60%;
+    --kind-assistant: 220 14% 92%;
+    --kind-thinking: 262 50% 62%;
+    --kind-tool-call: 38 75% 52%;
+    --kind-tool-output: 160 50% 50%;
+    --kind-token: 220 10% 52%;
+    --kind-note: 220 10% 48%;
+
+    /* Shadows — subtle on dark */
+    --shadow-card: 0 1px 3px 0 hsl(0 0% 0% / 0.2), 0 1px 2px -1px hsl(0 0% 0% / 0.15);
+    --shadow-elevated: 0 4px 12px -2px hsl(0 0% 0% / 0.3), 0 2px 4px -2px hsl(0 0% 0% / 0.2);
+    --shadow-dropdown: 0 8px 24px -4px hsl(0 0% 0% / 0.4), 0 2px 8px -2px hsl(0 0% 0% / 0.25);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-sans);
+    font-weight: 600;
+  }
+
+  code, pre, .font-mono, kbd {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer utilities {
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+  .shadow-elevated {
+    box-shadow: var(--shadow-elevated);
+  }
+  .shadow-dropdown {
+    box-shadow: var(--shadow-dropdown);
+  }
+
+  .glow-online {
+    box-shadow: 0 0 6px hsl(var(--status-online) / 0.4);
+  }
+  .glow-running {
+    box-shadow: 0 0 6px hsl(var(--status-running) / 0.4);
+  }
+  .glow-error {
+    box-shadow: 0 0 6px hsl(var(--status-error) / 0.4);
+  }
+  .glow-warning {
+    box-shadow: 0 0 6px hsl(var(--status-warning) / 0.4);
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .animate-pulse-dot {
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  /* Minimal scrollbar */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--text-muted) / 0.35);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--text-secondary) / 0.5);
+  }
+}
