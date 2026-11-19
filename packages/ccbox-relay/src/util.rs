@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn auth_message_matches_shared_vectors() {
-        let text = include_str!("../../../.agents/docs/REMOTE_AUTH_V1_VECTORS.json");
+        let text = include_str!("../../../docs/REMOTE_AUTH_V1_VECTORS.json");
         let file: VectorsFile = serde_json::from_str(text).expect("vectors json parses");
         assert_eq!(file.v, 1);
         assert_eq!(file.auth_domain_separator, AUTH_DOMAIN_SEPARATOR);

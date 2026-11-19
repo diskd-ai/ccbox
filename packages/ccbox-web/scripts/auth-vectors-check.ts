@@ -29,7 +29,7 @@ function parseDeviceKind(value: string): DeviceKind {
 }
 
 const here = resolve(fileURLToPath(import.meta.url), "..");
-const vectorsPath = resolve(here, "../../../.agents/docs/REMOTE_AUTH_V1_VECTORS.json");
+const vectorsPath = resolve(here, "../../../docs/REMOTE_AUTH_V1_VECTORS.json");
 
 const text = await readFile(vectorsPath, "utf-8");
 const file = JSON.parse(text) as VectorsFile;

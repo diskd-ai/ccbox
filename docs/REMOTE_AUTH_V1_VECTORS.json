@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "auth_domain_separator": "ccbox-remote-auth:v1",
+  "vectors": [
+    {
+      "name": "client-uuid-nonce-0..31",
+      "device_kind": "client",
+      "device_id": "01234567-89ab-cdef-0123-456789abcdef",
+      "nonce_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "expected_message_b64": "Y2Nib3gtcmVtb3RlLWF1dGg6djFjbGllbnQwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHw=="
+    },
+    {
+      "name": "ccbox-uuid-nonce-0..31",
+      "device_kind": "ccbox",
+      "device_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "nonce_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "expected_message_b64": "Y2Nib3gtcmVtb3RlLWF1dGg6djFjY2JveGY0N2FjMTBiLTU4Y2MtNDM3Mi1hNTY3LTBlMDJiMmMzZDQ3OQABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f"
+    }
+  ]
+}
+
