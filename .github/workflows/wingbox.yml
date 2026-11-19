@@ -1,0 +1,15 @@
+name: wingbox
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: aileron-tech/wingbox-action@v1
+        with:
+          upload-map: true
