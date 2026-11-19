@@ -238,6 +238,7 @@ version = "0.1.22"
 dependencies = [
  "ansi-to-tui",
  "arboard",
+ "axum",
  "base64",
  "ccbox-relay",
  "crossterm 0.29.0",
@@ -288,6 +289,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-tungstenite 0.26.2",
+ "ureq",
  "uuid",
 ]
 

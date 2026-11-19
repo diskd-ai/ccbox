@@ -20,13 +20,13 @@ pub fn ensure_pairing_record(
     let ttl_seconds = ttl_seconds.clamp(10, 3600);
     let now = OffsetDateTime::now_utc();
 
-    if let Some(record) = load_pairing(paths, guid)? {
-        if is_pairing_active(&record, now) {
-            return Ok(EnsurePairingResult {
-                record,
-                reused: true,
-            });
-        }
+    if let Some(record) = load_pairing(paths, guid)?
+        && is_pairing_active(&record, now)
+    {
+        return Ok(EnsurePairingResult {
+            record,
+            reused: true,
+        });
     }
 
     let secret = random_nonce32();

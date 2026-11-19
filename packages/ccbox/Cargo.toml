@@ -38,4 +38,5 @@ qrcode = "0.14.1"
 ccbox-relay = { path = "../ccbox-relay" }
 
 [dev-dependencies]
+axum = { version = "0.8.1", features = ["ws"] }
 tempfile = "3.12.0"

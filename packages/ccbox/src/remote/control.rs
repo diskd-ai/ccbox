@@ -8,6 +8,7 @@ use std::fs;
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -15,6 +16,7 @@ use uuid::Uuid;
 
 pub struct ControlPlane {
     sessions_dir: PathBuf,
+    sessions_scan_cache: Arc<Mutex<SessionsScanCache>>,
     process_manager: ProcessManager,
     process_signal_rx: std::sync::mpsc::Receiver<ProcessSignal>,
     processes: HashMap<String, ProcessEntry>,
@@ -60,6 +62,67 @@ struct TimelineSubscription {
     poll_every: Duration,
 }
 
+const SESSIONS_SCAN_CACHE_TTL: Duration = Duration::from_secs(2);
+
+struct SessionsScanCache {
+    cache: TtlCache<crate::infra::MultiEngineScanOutput>,
+}
+
+impl SessionsScanCache {
+    fn new() -> Self {
+        Self {
+            cache: TtlCache::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.cache.clear();
+    }
+
+    fn get_or_scan(
+        &mut self,
+        sessions_dir: &Path,
+    ) -> Arc<crate::infra::MultiEngineScanOutput> {
+        self.cache
+            .get_or_update(SESSIONS_SCAN_CACHE_TTL, || crate::infra::scan_all_sessions(sessions_dir))
+    }
+}
+
+struct TtlCache<T> {
+    cached_at: Option<Instant>,
+    value: Option<Arc<T>>,
+}
+
+impl<T> TtlCache<T> {
+    fn new() -> Self {
+        Self {
+            cached_at: None,
+            value: None,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.cached_at = None;
+        self.value = None;
+    }
+
+    fn get_or_update<F>(&mut self, ttl: Duration, compute: F) -> Arc<T>
+    where
+        F: FnOnce() -> T,
+    {
+        if let (Some(cached_at), Some(value)) = (self.cached_at, self.value.as_ref()) {
+            if cached_at.elapsed() <= ttl {
+                return value.clone();
+            }
+        }
+
+        let computed = Arc::new(compute());
+        self.cached_at = Some(Instant::now());
+        self.value = Some(computed.clone());
+        computed
+    }
+}
+
 impl ControlPlane {
     pub fn new(sessions_dir: PathBuf) -> Result<Self, super::ServeError> {
         let (tx, rx) = std::sync::mpsc::channel::<ProcessSignal>();
@@ -68,6 +131,7 @@ impl ControlPlane {
 
         Ok(Self {
             sessions_dir,
+            sessions_scan_cache: Arc::new(Mutex::new(SessionsScanCache::new())),
             process_manager,
             process_signal_rx: rx,
             processes: HashMap::new(),
@@ -79,6 +143,11 @@ impl ControlPlane {
     pub fn on_connected(&mut self) {
         self.log_subscriptions.clear();
         self.timeline_subscriptions.clear();
+        let mut cache = self
+            .sessions_scan_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cache.clear();
     }
 
     pub async fn tick(&mut self, ws: &mut super::WsStream) -> Result<(), super::ServeError> {
@@ -149,6 +218,7 @@ impl ControlPlane {
         match req.method.as_str() {
             "projects.list" => self.handle_projects_list().await,
             "sessions.list" => self.handle_sessions_list(req).await,
+            "sessions.listAll" => self.handle_sessions_list_all().await,
             "sessions.getTimeline" => self.handle_sessions_get_timeline(req).await,
             "sessions.subscribeTimeline" => {
                 self.handle_sessions_subscribe_timeline(session_id, req)
@@ -175,7 +245,16 @@ impl ControlPlane {
 
     async fn handle_projects_list(&self) -> Result<Value, RpcMethodError> {
         let sessions_dir = self.sessions_dir.clone();
-        tokio::task::spawn_blocking(move || build_projects_list(&sessions_dir))
+        let scan_cache = self.sessions_scan_cache.clone();
+        tokio::task::spawn_blocking(move || {
+            let scan = {
+                let mut cache = scan_cache
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                cache.get_or_scan(&sessions_dir)
+            };
+            build_projects_list(scan.as_ref())
+        })
             .await
             .map_err(|error| RpcMethodError {
                 code: "Error".to_string(),
@@ -207,12 +286,40 @@ impl ControlPlane {
         }
 
         let sessions_dir = self.sessions_dir.clone();
-        tokio::task::spawn_blocking(move || build_sessions_list(&sessions_dir, &project_id))
+        let scan_cache = self.sessions_scan_cache.clone();
+        tokio::task::spawn_blocking(move || {
+            let scan = {
+                let mut cache = scan_cache
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                cache.get_or_scan(&sessions_dir)
+            };
+            build_sessions_list(scan.as_ref(), &project_id)
+        })
             .await
             .map_err(|error| RpcMethodError {
                 code: "Error".to_string(),
                 message: error.to_string(),
             })
+    }
+
+    async fn handle_sessions_list_all(&self) -> Result<Value, RpcMethodError> {
+        let sessions_dir = self.sessions_dir.clone();
+        let scan_cache = self.sessions_scan_cache.clone();
+        tokio::task::spawn_blocking(move || {
+            let scan = {
+                let mut cache = scan_cache
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                cache.get_or_scan(&sessions_dir)
+            };
+            build_sessions_list_all(scan.as_ref())
+        })
+        .await
+        .map_err(|error| RpcMethodError {
+            code: "Error".to_string(),
+            message: error.to_string(),
+        })
     }
 
     async fn handle_sessions_get_timeline(
@@ -244,8 +351,16 @@ impl ControlPlane {
         let cursor = params.cursor.unwrap_or(0);
 
         let sessions_dir = self.sessions_dir.clone();
+        let scan_cache = self.sessions_scan_cache.clone();
         tokio::task::spawn_blocking(move || {
-            build_session_timeline(&sessions_dir, &session_id, limit, cursor)
+            let scan = {
+                let mut cache = scan_cache
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                cache.get_or_scan(&sessions_dir)
+            };
+
+            build_session_timeline(scan.as_ref(), &session_id, limit, cursor)
         })
         .await
         .map_err(|error| RpcMethodError {
@@ -280,9 +395,17 @@ impl ControlPlane {
         }
 
         let sessions_dir = self.sessions_dir.clone();
+        let scan_cache = self.sessions_scan_cache.clone();
         let resolve_session_id = target_session_id.clone();
         let (log_path, file_size_bytes) = tokio::task::spawn_blocking(move || {
-            resolve_session_log_path_and_size(&sessions_dir, &resolve_session_id)
+            let scan = {
+                let mut cache = scan_cache
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                cache.get_or_scan(&sessions_dir)
+            };
+
+            resolve_session_log_path_and_size(scan.as_ref(), &resolve_session_id)
         })
         .await
         .map_err(|error| RpcMethodError {
@@ -980,12 +1103,12 @@ fn session_engine_label(engine: crate::domain::SessionEngine) -> &'static str {
     }
 }
 
-fn build_sessions_list(sessions_dir: &Path, project_id: &str) -> Value {
-    let scan = crate::infra::scan_all_sessions(sessions_dir);
+fn build_sessions_list(scan: &crate::infra::MultiEngineScanOutput, project_id: &str) -> Value {
+    let project_path = PathBuf::from(project_id);
     let mut sessions = scan
         .sessions
-        .into_iter()
-        .filter(|session| session.meta.cwd.display().to_string() == project_id)
+        .iter()
+        .filter(|session| session.meta.cwd == project_path)
         .collect::<Vec<_>>();
 
     sessions.sort_by_key(|session| session.file_modified.unwrap_or(SystemTime::UNIX_EPOCH));
@@ -994,10 +1117,10 @@ fn build_sessions_list(sessions_dir: &Path, project_id: &str) -> Value {
     let rows = sessions
         .into_iter()
         .map(|session| SessionListEntry {
-            session_id: session.meta.id,
-            started_ts: session.meta.started_at_rfc3339,
+            session_id: session.meta.id.clone(),
+            started_ts: session.meta.started_at_rfc3339.clone(),
             engine: session_engine_label(session.engine).to_string(),
-            title: session.title,
+            title: session.title.clone(),
         })
         .collect::<Vec<_>>();
 
@@ -1005,12 +1128,32 @@ fn build_sessions_list(sessions_dir: &Path, project_id: &str) -> Value {
         .unwrap_or_else(|_| serde_json::json!({ "sessions": [] }))
 }
 
+fn build_sessions_list_all(scan: &crate::infra::MultiEngineScanOutput) -> Value {
+    let mut sessions = scan.sessions.iter().collect::<Vec<_>>();
+
+    sessions.sort_by_key(|session| session.file_modified.unwrap_or(SystemTime::UNIX_EPOCH));
+    sessions.reverse();
+
+    let rows = sessions
+        .into_iter()
+        .map(|session| SessionListAllEntry {
+            session_id: session.meta.id.clone(),
+            started_ts: session.meta.started_at_rfc3339.clone(),
+            engine: session_engine_label(session.engine).to_string(),
+            title: session.title.clone(),
+            project_id: session.meta.cwd.display().to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::to_value(SessionsListAllResult { sessions: rows })
+        .unwrap_or_else(|_| serde_json::json!({ "sessions": [] }))
+}
+
 fn resolve_session_log_path_and_size(
-    sessions_dir: &Path,
+    scan: &crate::infra::MultiEngineScanOutput,
     session_id: &str,
 ) -> Result<(PathBuf, u64), RpcMethodError> {
-    let scan = crate::infra::scan_all_sessions(sessions_dir);
-    let Some(session) = scan.sessions.into_iter().find(|s| s.meta.id == session_id) else {
+    let Some(session) = scan.sessions.iter().find(|s| s.meta.id == session_id) else {
         return Err(RpcMethodError {
             code: "NotFound".to_string(),
             message: "session not found".to_string(),
@@ -1033,7 +1176,7 @@ fn resolve_session_log_path_and_size(
         }
     };
 
-    Ok((session.log_path, size))
+    Ok((session.log_path.clone(), size))
 }
 
 fn timeline_kind_label(kind: crate::domain::TimelineItemKind) -> &'static str {
@@ -1063,12 +1206,12 @@ fn timeline_item_to_out(item: crate::domain::TimelineItem) -> TimelineItemOut {
 }
 
 fn build_session_timeline(
-    sessions_dir: &Path,
+    scan: &crate::infra::MultiEngineScanOutput,
     session_id: &str,
     limit: usize,
     cursor: u64,
 ) -> Result<Value, RpcMethodError> {
-    let (log_path, file_size_bytes) = resolve_session_log_path_and_size(sessions_dir, session_id)?;
+    let (log_path, file_size_bytes) = resolve_session_log_path_and_size(scan, session_id)?;
     if cursor >= file_size_bytes {
         return Ok(serde_json::json!({
             "items": [],
@@ -1271,18 +1414,48 @@ fn build_tasks_load_for_spawn(
     Ok((task, images))
 }
 
-fn build_projects_list(sessions_dir: &Path) -> Value {
-    let scan = crate::infra::scan_all_sessions(sessions_dir);
-    let projects = crate::domain::index_projects(&scan.sessions);
+fn build_projects_list(scan: &crate::infra::MultiEngineScanOutput) -> Value {
+    #[derive(Clone, Copy, Debug)]
+    struct ProjectAgg {
+        session_count: u32,
+        last_modified: Option<SystemTime>,
+    }
+
+    let mut by_project: std::collections::BTreeMap<PathBuf, ProjectAgg> =
+        std::collections::BTreeMap::new();
+
+    for session in &scan.sessions {
+        let entry = by_project.entry(session.meta.cwd.clone()).or_insert(ProjectAgg {
+            session_count: 0,
+            last_modified: None,
+        });
+        entry.session_count = entry.session_count.saturating_add(1);
+        if let Some(modified) = session.file_modified {
+            entry.last_modified = Some(match entry.last_modified {
+                Some(prev) if prev >= modified => prev,
+                _ => modified,
+            });
+        }
+    }
+
+    let mut projects = by_project
+        .into_iter()
+        .map(|(path, agg)| (path, agg))
+        .collect::<Vec<_>>();
+
+    projects.sort_by_key(|(_, agg)| agg.last_modified.unwrap_or(SystemTime::UNIX_EPOCH));
+    projects.reverse();
+
     let rows = projects
         .into_iter()
-        .map(|project| ProjectListEntry {
-            project_id: project.project_path.display().to_string(),
-            path: project.project_path.display().to_string(),
-            last_seen_ts: project.last_modified.and_then(system_time_to_iso),
-            session_count: project.sessions.len() as u32,
+        .map(|(project_path, agg)| ProjectListEntry {
+            project_id: project_path.display().to_string(),
+            path: project_path.display().to_string(),
+            last_seen_ts: agg.last_modified.and_then(system_time_to_iso),
+            session_count: agg.session_count,
         })
         .collect::<Vec<_>>();
+
     serde_json::to_value(ProjectsListResult { projects: rows })
         .unwrap_or_else(|_| serde_json::json!({ "projects": [] }))
 }
@@ -1313,7 +1486,62 @@ struct SessionsListResult {
     sessions: Vec<SessionListEntry>,
 }
 
+#[derive(Debug, Serialize)]
+struct SessionListAllEntry {
+    session_id: String,
+    started_ts: String,
+    engine: String,
+    title: String,
+    project_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionsListAllResult {
+    sessions: Vec<SessionListAllEntry>,
+}
+
 fn system_time_to_iso(value: SystemTime) -> Option<String> {
     let timestamp = OffsetDateTime::from(value);
     timestamp.format(&Rfc3339).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ttl_cache_reuses_value_within_ttl() {
+        let mut cache: TtlCache<u32> = TtlCache::new();
+        let mut calls = 0u32;
+
+        let first = cache.get_or_update(Duration::from_secs(60), || {
+            calls += 1;
+            123
+        });
+        let second = cache.get_or_update(Duration::from_secs(60), || {
+            calls += 1;
+            456
+        });
+
+        assert_eq!(calls, 1);
+        assert_eq!(*first, 123);
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn ttl_cache_expires_with_zero_ttl() {
+        let mut cache: TtlCache<u32> = TtlCache::new();
+        let mut calls = 0u32;
+
+        let _ = cache.get_or_update(Duration::ZERO, || {
+            calls += 1;
+            123
+        });
+        let _ = cache.get_or_update(Duration::ZERO, || {
+            calls += 1;
+            456
+        });
+
+        assert_eq!(calls, 2);
+    }
 }
